@@ -1,0 +1,23 @@
+{
+  "mappings": [
+    {
+      "source_path": "src/api/",
+      "target_doc": "docs/api-reference.md",
+      "description": "API endpoints and routing logic updates"
+    },
+    {
+      "source_path": "src/core/",
+      "target_doc": "docs/architecture.md",
+      "description": "Core engine and business logic changes"
+    },
+    {
+      "source_path": "README.md",
+      "target_doc": "README.md",
+      "description": "High-level project overview changes"
+    }
+  ],
+  "settings": {
+    "max_diff_lines": 500,
+    "fallback_action": "open_issue"
+  }
+}

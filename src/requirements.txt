@@ -1,0 +1,5 @@
+PyGithub>=2.1.1
+openai>=1.12.0
+PyYAML>=6.0.1
+pytest>=8.0.0
+requests>=2.31.0
