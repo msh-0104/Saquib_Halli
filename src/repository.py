@@ -1,218 +1,99 @@
 from __future__ import annotations
 
+import os
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Iterator, Optional
 
-from .database import Database, DatabaseError
 
-
-class RepositoryError(Exception):
-    """Base exception for repository-related errors."""
+class DatabaseError(Exception):
+    """Base exception for database-related errors."""
 
 
 @dataclass(frozen=True)
-class Task:
-    id: int
-    title: str
-    description: str
-    status: str
-    priority: int
-    due_date: Optional[str]
-    created_at: str
-    updated_at: str
+class DatabaseConfig:
+    path: str
 
 
-def _row_to_task(row: Dict[str, Any]) -> Task:
-    return Task(
-        id=row["id"],
-        title=row["title"],
-        description=row["description"],
-        status=row["status"],
-        priority=row["priority"],
-        due_date=row["due_date"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
+DEFAULT_DB_PATH = os.environ.get(
+    "TODO_DB_PATH",
+    str(Path.home() / ".todo_app" / "todo.db"),
+)
 
 
-_ALLOWED_SORT_FIELDS = {"created_at", "updated_at", "due_date", "priority", "title", "status", "id"}
-_ALLOWED_SORT_DIRS = {"asc", "desc"}
+def _dict_factory(cursor: sqlite3.Cursor, row: tuple) -> dict:
+    d = {}
+    for idx, col in enumerate(cursor.description):
+        d[col[0]] = row[idx]
+    return d
 
 
-class TaskRepository:
-    def __init__(self, db: Database):
-        self.db = db
+class Database:
+    def __init__(self, config: Optional[DatabaseConfig] = None):
+        self.config = config or DatabaseConfig(path=DEFAULT_DB_PATH)
 
-    def create_task(
-        self,
-        *,
-        title: str,
-        description: str = "",
-        status: str = "pending",
-        priority: int = 0,
-        due_date: Optional[str] = None,
-    ) -> Task:
-        sql = """
-        INSERT INTO tasks (title, description, status, priority, due_date)
-        VALUES (?, ?, ?, ?, ?)
+    def connect(self) -> sqlite3.Connection:
+        if self.config.path not in (":memory:", ""):
+            db_path = Path(self.config.path).expanduser()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            resolved_path = str(db_path)
+        else:
+            resolved_path = self.config.path
+
+        conn = sqlite3.connect(
+            resolved_path,
+            timeout=10,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+        conn.execute("PRAGMA busy_timeout = 5000;")
+        conn.row_factory = _dict_factory
+        with conn:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+        return conn
+
+    @contextmanager
+    def session(self) -> Iterator[sqlite3.Connection]:
+        conn = self.connect()
+        try:
+            yield conn
+        except sqlite3.Error as e:
+            raise DatabaseError(str(e)) from e
+        finally:
+            conn.close()
+
+    def init_schema(self) -> None:
+        """
+        Initialize tasks table and indexes.
+        Safe to run multiple times. Wrapped in DatabaseError for consistency.
+        """
+        ddl = """
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            priority INTEGER NOT NULL DEFAULT 0,
+            due_date TEXT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            CHECK (length(trim(title)) > 0),
+            CHECK (length(trim(title)) <= 255),
+            CHECK (status IN ('pending','done')),
+            CHECK (priority BETWEEN 0 AND 5)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
+        CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
+        CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
         """
         try:
-            with self.db.session() as conn:
-                conn.execute("BEGIN;")
-                cur = conn.execute(sql, (title, description, status, priority, due_date))
-                task_id = cur.lastrowid
-                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                conn.execute("COMMIT;")
-                return _row_to_task(row)
+            with self.session() as conn:
+                conn.executescript(ddl)
         except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def get_task(self, task_id: int) -> Optional[Task]:
-        try:
-            with self.db.session() as conn:
-                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                return _row_to_task(row) if row else None
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def update_task(
-        self,
-        task_id: int,
-        *,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        status: Optional[str] = None,
-        priority: Optional[int] = None,
-        due_date: Optional[str] = None,
-    ) -> Optional[Task]:
-        fields: List[str] = []
-        params: List[Any] = []
-
-        if title is not None:
-            fields.append("title = ?")
-            params.append(title)
-        if description is not None:
-            fields.append("description = ?")
-            params.append(description)
-        if status is not None:
-            fields.append("status = ?")
-            params.append(status)
-        if priority is not None:
-            fields.append("priority = ?")
-            params.append(priority)
-        if due_date is not None:
-            fields.append("due_date = ?")
-            params.append(due_date)
-
-        if not fields:
-            return self.get_task(task_id)
-
-        sql = f"""
-        UPDATE tasks
-        SET {", ".join(fields)},
-            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE id = ?
-        """
-        try:
-            with self.db.session() as conn:
-                conn.execute("BEGIN;")
-                cur = conn.execute(sql, (*params, task_id))
-                if cur.rowcount == 0:
-                    conn.execute("ROLLBACK;")
-                    return None
-                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                conn.execute("COMMIT;")
-                return _row_to_task(row) if row else None
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def set_due_date(self, task_id: int, due_date: Optional[str]) -> Optional[Task]:
-        sql = """
-        UPDATE tasks
-        SET due_date = ?,
-            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE id = ?
-        """
-        try:
-            with self.db.session() as conn:
-                conn.execute("BEGIN;")
-                cur = conn.execute(sql, (due_date, task_id))
-                if cur.rowcount == 0:
-                    conn.execute("ROLLBACK;")
-                    return None
-                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                conn.execute("COMMIT;")
-                return _row_to_task(row) if row else None
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def delete_task(self, task_id: int) -> bool:
-        try:
-            with self.db.session() as conn:
-                conn.execute("BEGIN;")
-                cur = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-                conn.execute("COMMIT;")
-                return cur.rowcount > 0
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def list_tasks(
-        self,
-        *,
-        q: Optional[str] = None,
-        status: Optional[str] = None,
-        priority_min: Optional[int] = None,
-        priority_max: Optional[int] = None,
-        due_before: Optional[str] = None,
-        due_after: Optional[str] = None,
-        sort_by: str = "created_at",
-        sort_dir: str = "desc",
-        limit: int = 100,
-        offset: int = 0,
-    ) -> List[Task]:
-        where: List[str] = []
-        params: List[Any] = []
-
-        if q:
-            where.append("(title LIKE ? OR description LIKE ?)")
-            like = f"%{q}%"
-            params.extend([like, like])
-        if status:
-            where.append("status = ?")
-            params.append(status)
-        if priority_min is not None:
-            where.append("priority >= ?")
-            params.append(priority_min)
-        if priority_max is not None:
-            where.append("priority <= ?")
-            params.append(priority_max)
-        if due_before is not None:
-            where.append("due_date IS NOT NULL AND due_date <= ?")
-            params.append(due_before)
-        if due_after is not None:
-            where.append("due_date IS NOT NULL AND due_date >= ?")
-            params.append(due_after)
-
-        if sort_by not in _ALLOWED_SORT_FIELDS:
-            raise RepositoryError(f"Invalid sort_by: {sort_by}")
-        sort_dir_l = sort_dir.lower()
-        if sort_dir_l not in _ALLOWED_SORT_DIRS:
-            raise RepositoryError(f"Invalid sort_dir: {sort_dir}")
-
-        order_by = f"{sort_by} {sort_dir_l}"
-        if sort_by == "due_date":
-            order_by = f"(due_date IS NULL) ASC, due_date {sort_dir_l}"
-
-        sql = "SELECT * FROM tasks"
-        if where:
-            sql += " WHERE " + " AND ".join(where)
-        sql += f" ORDER BY {order_by} LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-
-        try:
-            with self.db.session() as conn:
-                rows = conn.execute(sql, tuple(params)).fetchall()
-                return [_row_to_task(r) for r in rows]
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
+            raise DatabaseError(f"Failed to initialize schema: {e}") from e
