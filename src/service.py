@@ -1,194 +1,142 @@
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import date
+from typing import List, Optional
 
-from .database import Database, DatabaseError
+from .repository import RepositoryError, Task, TaskRepository
 
 
-class RepositoryError(Exception):
-    """Base exception for repository-related errors."""
+class ValidationError(ValueError):
+    """Raised when input validation fails."""
+
+
+class NotFoundError(LookupError):
+    """Raised when a requested task does not exist."""
+
+
+_STATUS_ALLOWED = {"pending", "done"}
+_MAX_TITLE_LENGTH = 255
+
+
+def _validate_title(title: str) -> str:
+    if title is None:
+        raise ValidationError("title is required")
+    if not isinstance(title, str):
+        raise ValidationError("title must be a string")
+    cleaned = title.strip()
+    if not cleaned:
+        raise ValidationError("title must be non-empty")
+    if len(cleaned) > _MAX_TITLE_LENGTH:
+        raise ValidationError(f"title must be at most {_MAX_TITLE_LENGTH} characters")
+    return cleaned
+
+
+def _validate_description(description: str) -> str:
+    if description is None:
+        return ""
+    if not isinstance(description, str):
+        raise ValidationError("description must be a string")
+    return description.strip()
+
+
+def _validate_status(status: str) -> str:
+    if not isinstance(status, str) or status not in _STATUS_ALLOWED:
+        raise ValidationError("status must be 'pending' or 'done'")
+    return status
+
+
+def _validate_priority(priority: int) -> int:
+    if priority is None:
+        return 0
+    if not isinstance(priority, int) or isinstance(priority, bool):
+        raise ValidationError("priority must be an integer")
+    if not 0 <= priority <= 5:
+        raise ValidationError("priority must be between 0 and 5")
+    return priority
+
+
+def _validate_due_date(due_date: Optional[str]) -> Optional[str]:
+    if due_date is None:
+        return None
+    if not isinstance(due_date, str):
+        raise ValidationError("due_date must be a string in YYYY-MM-DD format or None")
+    try:
+        date.fromisoformat(due_date)
+    except ValueError as exc:
+        raise ValidationError("due_date must be in YYYY-MM-DD format") from exc
+    return due_date
+
+
+def _validate_non_negative_int(value: int, name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValidationError(f"{name} must be a non-negative integer")
+    return value
 
 
 @dataclass(frozen=True)
-class Task:
-    id: int
+class TaskCreate:
     title: str
-    description: str
-    status: str
-    priority: int
-    due_date: Optional[str]
-    created_at: str
-    updated_at: str
+    description: str = ""
+    status: str = "pending"
+    priority: int = 0
+    due_date: Optional[str] = None
 
 
-def _row_to_task(row: Dict[str, Any]) -> Task:
-    return Task(
-        id=row["id"],
-        title=row["title"],
-        description=row["description"],
-        status=row["status"],
-        priority=row["priority"],
-        due_date=row["due_date"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
+@dataclass(frozen=True)
+class TaskUpdate:
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[int] = None
+    due_date: Optional[str] = None
+    clear_due_date: bool = False
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+class TaskService:
+    def __init__(self, repo: TaskRepository):
+        self.repo = repo
 
+    def create(self, data: TaskCreate) -> Task:
+        return self.repo.create_task(
+            title=_validate_title(data.title),
+            description=_validate_description(data.description),
+            status=_validate_status(data.status),
+            priority=_validate_priority(data.priority),
+            due_date=_validate_due_date(data.due_date),
+        )
 
-def _format_utc(value: datetime) -> str:
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%fZ")
+    def get(self, task_id: int) -> Task:
+        task = self.repo.get_task(task_id)
+        if task is None:
+            raise NotFoundError(f"Task {task_id} not found")
+        return task
 
+    def update(self, task_id: int, data: TaskUpdate) -> Task:
+        payload = {}
+        if data.title is not None:
+            payload["title"] = _validate_title(data.title)
+        if data.description is not None:
+            payload["description"] = _validate_description(data.description)
+        if data.status is not None:
+            payload["status"] = _validate_status(data.status)
+        if data.priority is not None:
+            payload["priority"] = _validate_priority(data.priority)
+        if data.clear_due_date:
+            payload["clear_due_date"] = True
+        elif data.due_date is not None:
+            payload["due_date"] = _validate_due_date(data.due_date)
 
-def _ensure_later_timestamp(previous: Optional[str]) -> str:
-    candidate = _utc_now()
-    if previous:
-        try:
-            previous_dt = datetime.strptime(previous, "%Y-%m-%dT%H:%M:%fZ").replace(tzinfo=timezone.utc)
-        except ValueError:
-            try:
-                previous_dt = datetime.fromisoformat(previous.replace("Z", "+00:00")).astimezone(timezone.utc)
-            except ValueError:
-                previous_dt = None
-        if previous_dt is not None and candidate <= previous_dt:
-            candidate = previous_dt + timedelta(microseconds=1)
-    return _format_utc(candidate)
+        updated = self.repo.update_task(task_id, **payload)
+        if updated is None:
+            raise NotFoundError(f"Task {task_id} not found")
+        return updated
 
+    def delete(self, task_id: int) -> None:
+        if not self.repo.delete_task(task_id):
+            raise NotFoundError(f"Task {task_id} not found")
 
-_ALLOWED_SORT_FIELDS = {"created_at", "updated_at", "due_date", "priority", "title", "status", "id"}
-_ALLOWED_SORT_DIRS = {"asc", "desc"}
-
-
-class TaskRepository:
-    def __init__(self, db: Database):
-        self.db = db
-
-    def create_task(
-        self,
-        *,
-        title: str,
-        description: str = "",
-        status: str = "pending",
-        priority: int = 0,
-        due_date: Optional[str] = None,
-    ) -> Task:
-        title = (title or "").strip()
-        sql = """
-        INSERT INTO tasks (title, description, status, priority, due_date)
-        VALUES (?, ?, ?, ?, ?)
-        """
-        try:
-            with self.db.session() as conn:
-                conn.execute("BEGIN;")
-                cur = conn.execute(sql, (title, description, status, priority, due_date))
-                task_id = cur.lastrowid
-                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                conn.execute("COMMIT;")
-                return _row_to_task(row)
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def get_task(self, task_id: int) -> Optional[Task]:
-        try:
-            with self.db.session() as conn:
-                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                return _row_to_task(row) if row else None
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def update_task(
-        self,
-        task_id: int,
-        *,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        status: Optional[str] = None,
-        priority: Optional[int] = None,
-        due_date: Optional[str] = None,
-    ) -> Optional[Task]:
-        fields: List[str] = []
-        params: List[Any] = []
-
-        if title is not None:
-            fields.append("title = ?")
-            params.append((title or "").strip())
-        if description is not None:
-            fields.append("description = ?")
-            params.append(description)
-        if status is not None:
-            fields.append("status = ?")
-            params.append(status)
-        if priority is not None:
-            fields.append("priority = ?")
-            params.append(priority)
-        if due_date is not None:
-            fields.append("due_date = ?")
-            params.append(due_date)
-
-        if not fields:
-            return self.get_task(task_id)
-
-        try:
-            with self.db.session() as conn:
-                conn.execute("BEGIN;")
-                current = conn.execute("SELECT updated_at FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                updated_at = _ensure_later_timestamp(current["updated_at"] if current else None)
-                sql = f"""
-                UPDATE tasks
-                SET {', '.join(fields)},
-                    updated_at = ?
-                WHERE id = ?
-                """
-                cur = conn.execute(sql, (*params, updated_at, task_id))
-                if cur.rowcount == 0:
-                    conn.execute("ROLLBACK;")
-                    return None
-                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                conn.execute("COMMIT;")
-                return _row_to_task(row) if row else None
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def set_due_date(self, task_id: int, due_date: Optional[str]) -> Optional[Task]:
-        try:
-            with self.db.session() as conn:
-                conn.execute("BEGIN;")
-                current = conn.execute("SELECT updated_at FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                updated_at = _ensure_later_timestamp(current["updated_at"] if current else None)
-                cur = conn.execute(
-                    """
-                    UPDATE tasks
-                    SET due_date = ?,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (due_date, updated_at, task_id),
-                )
-                if cur.rowcount == 0:
-                    conn.execute("ROLLBACK;")
-                    return None
-                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                conn.execute("COMMIT;")
-                return _row_to_task(row) if row else None
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def delete_task(self, task_id: int) -> bool:
-        try:
-            with self.db.session() as conn:
-                conn.execute("BEGIN;")
-                cur = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-                conn.execute("COMMIT;")
-                return cur.rowcount > 0
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
-    def list_tasks(
+    def search(
         self,
         *,
         q: Optional[str] = None,
@@ -202,56 +150,36 @@ class TaskRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> List[Task]:
-        if limit < 0:
-            raise RepositoryError("limit must be non-negative")
-        if offset < 0:
-            raise RepositoryError("offset must be non-negative")
-
-        where: List[str] = []
-        params: List[Any] = []
-
-        if status:
-            where.append("status = ?")
-            params.append(status)
+        if status is not None and status != "":
+            _validate_status(status)
         if priority_min is not None:
-            where.append("priority >= ?")
-            params.append(priority_min)
+            _validate_priority(priority_min)
         if priority_max is not None:
-            where.append("priority <= ?")
-            params.append(priority_max)
+            _validate_priority(priority_max)
+        if priority_min is not None and priority_max is not None and priority_min > priority_max:
+            raise ValidationError("priority_min cannot be greater than priority_max")
         if due_before is not None:
-            where.append("due_date IS NOT NULL AND due_date <= ?")
-            params.append(due_before)
+            _validate_due_date(due_before)
         if due_after is not None:
-            where.append("due_date IS NOT NULL AND due_date >= ?")
-            params.append(due_after)
-
-        if sort_by not in _ALLOWED_SORT_FIELDS:
-            raise RepositoryError(f"Invalid sort_by: {sort_by}")
-        sort_dir_l = sort_dir.lower()
-        if sort_dir_l not in _ALLOWED_SORT_DIRS:
-            raise RepositoryError(f"Invalid sort_dir: {sort_dir}")
-
-        order_by = f"{sort_by} {sort_dir_l}"
-        if sort_by == "due_date":
-            order_by = f"(due_date IS NULL) ASC, due_date {sort_dir_l}"
-
-        sql = "SELECT * FROM tasks"
-        if where:
-            sql += " WHERE " + " AND ".join(where)
-        sql += f" ORDER BY {order_by}"
-
-        try:
-            with self.db.session() as conn:
-                rows = conn.execute(sql, tuple(params)).fetchall()
-        except (sqlite3.Error, DatabaseError) as e:
-            raise RepositoryError(str(e)) from e
-
+            _validate_due_date(due_after)
+        if due_before is not None and due_after is not None and due_after > due_before:
+            raise ValidationError("due_after cannot be greater than due_before")
+        if q is not None and not isinstance(q, str):
+            raise ValidationError("q must be a string")
         if q is not None:
-            needle = q.strip().casefold()
-            if needle:
-                rows = [row for row in rows if needle in (row["title"] or "").casefold()]
-            else:
-                rows = list(rows)
-        rows = rows[offset:offset + limit]
-        return [_row_to_task(row) for row in rows]
+            q = q.strip() or None
+        limit = _validate_non_negative_int(limit, "limit")
+        offset = _validate_non_negative_int(offset, "offset")
+
+        return self.repo.list_tasks(
+            q=q,
+            status=status or None,
+            priority_min=priority_min,
+            priority_max=priority_max,
+            due_before=due_before,
+            due_after=due_after,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            limit=limit,
+            offset=offset,
+        )

@@ -17,14 +17,14 @@ class DatabaseConfig:
     path: str
 
 
-DEFAULT_DB_PATH = os.environ.get("TODO_DB_PATH", "todo.db")
+DEFAULT_DB_PATH = os.environ.get(
+    "TODO_DB_PATH",
+    str(Path.home() / ".todo_app" / "todo.db"),
+)
 
 
 def _dict_factory(cursor: sqlite3.Cursor, row: tuple) -> dict:
-    d = {}
-    for idx, col in enumerate(cursor.description):
-        d[col[0]] = row[idx]
-    return d
+    return {column[0]: row[index] for index, column in enumerate(cursor.description)}
 
 
 class Database:
@@ -32,37 +32,43 @@ class Database:
         self.config = config or DatabaseConfig(path=DEFAULT_DB_PATH)
 
     def connect(self) -> sqlite3.Connection:
-        if self.config.path not in (":memory:", ""):
-            Path(self.config.path).parent.mkdir(parents=True, exist_ok=True)
+        raw_path = self.config.path
+        if raw_path not in (":memory:", ""):
+            path = Path(raw_path).expanduser()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            resolved_path = str(path)
+        else:
+            resolved_path = raw_path
 
-        conn = sqlite3.connect(
-            self.config.path,
-            timeout=10,
-            isolation_level=None,
-            check_same_thread=False,
-        )
-        conn.row_factory = _dict_factory
-        with conn:
-            conn.execute("PRAGMA foreign_keys = ON;")
-            conn.execute("PRAGMA journal_mode = WAL;")
-            conn.execute("PRAGMA synchronous = NORMAL;")
-        return conn
+        try:
+            connection = sqlite3.connect(
+                resolved_path,
+                timeout=5,
+                isolation_level=None,
+                check_same_thread=False,
+            )
+            connection.row_factory = _dict_factory
+            connection.execute("PRAGMA busy_timeout = 5000;")
+            connection.execute("PRAGMA foreign_keys = ON;")
+            if resolved_path != ":memory:":
+                connection.execute("PRAGMA journal_mode = WAL;")
+            connection.execute("PRAGMA synchronous = NORMAL;")
+            return connection
+        except (OSError, sqlite3.Error) as exc:
+            raise DatabaseError("Unable to open the todo database") from exc
 
     @contextmanager
     def session(self) -> Iterator[sqlite3.Connection]:
-        conn = self.connect()
+        connection = self.connect()
         try:
-            yield conn
-        except sqlite3.Error as e:
-            raise DatabaseError(str(e)) from e
+            yield connection
+        except sqlite3.Error as exc:
+            raise DatabaseError("Database operation failed") from exc
         finally:
-            conn.close()
+            connection.close()
 
     def init_schema(self) -> None:
-        """
-        Initialize tasks table and indexes.
-        Safe to run multiple times. Wrapped in DatabaseError for consistency.
-        """
+        """Create the existing task schema and indexes if absent."""
         ddl = """
         CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,18 +80,17 @@ class Database:
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
             updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
             CHECK (length(trim(title)) > 0),
+            CHECK (length(trim(title)) <= 255),
             CHECK (status IN ('pending','done')),
             CHECK (priority BETWEEN 0 AND 5)
         );
-
         CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
         CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
         CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
         CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
         """
         try:
-            with self.session() as conn:
-                # executescript executes DDL safely without manual BEGIN/COMMIT blocks
-                conn.executescript(ddl)
-        except (sqlite3.Error, DatabaseError) as e:
-            raise DatabaseError(f"Failed to initialize schema: {e}") from e
+            with self.session() as connection:
+                connection.executescript(ddl)
+        except (sqlite3.Error, DatabaseError) as exc:
+            raise DatabaseError("Failed to initialize database schema") from exc

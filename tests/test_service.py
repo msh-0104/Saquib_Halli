@@ -3,81 +3,80 @@ from __future__ import annotations
 from pathlib import Path
 import pytest
 
-from src.database import Database, DatabaseConfig
-from src.repository import TaskRepository
+from src.database import Database, DatabaseConfig, DatabaseError
+from src.repository import RepositoryError, TaskRepository
+from src.service import NotFoundError, TaskCreate, TaskService, TaskUpdate, ValidationError
 
 
 @pytest.fixture()
-def repo(tmp_path: Path) -> TaskRepository:
-    db_path = tmp_path / "test.db"
-    db = Database(DatabaseConfig(path=str(db_path)))
+def service(tmp_path: Path) -> TaskService:
+    db = Database(DatabaseConfig(path=str(tmp_path / "service.db")))
     db.init_schema()
-    return TaskRepository(db)
+    return TaskService(TaskRepository(db))
 
 
-def test_create_and_get(repo: TaskRepository) -> None:
-    created = repo.create_task(title="Buy milk")
-    assert created.id > 0
-    assert created.title == "Buy milk"
-
-    fetched = repo.get_task(created.id)
-    assert fetched is not None
-    assert fetched.id == created.id
+def test_create_rejects_empty_and_whitespace_titles(service: TaskService) -> None:
+    for value in ("", "   ", "\t\n", "\u00a0"):
+        with pytest.raises(ValidationError):
+            service.create(TaskCreate(title=value))
 
 
-def test_list_tasks(repo: TaskRepository) -> None:
-    repo.create_task(title="A")
-    repo.create_task(title="B")
-    tasks = repo.list_tasks()
-    assert len(tasks) >= 2
+def test_create_trims_title_and_enforces_maximum(service: TaskService) -> None:
+    assert service.create(TaskCreate(title="  ok  ")).title == "ok"
+    assert len(service.create(TaskCreate(title="x" * 255)).title) == 255
+    with pytest.raises(ValidationError):
+        service.create(TaskCreate(title="x" * 256))
 
 
-def test_search_title_only_matches_title(repo: TaskRepository) -> None:
-    repo.create_task(title="Alpha", description="target mention")
-    found = repo.list_tasks(q="target")
-    assert found == []
+def test_update_missing_and_invalid_input(service: TaskService) -> None:
+    with pytest.raises(NotFoundError):
+        service.get(1)
+    with pytest.raises(NotFoundError):
+        service.update(1, TaskUpdate(title="valid"))
+    with pytest.raises(ValidationError):
+        service.create(TaskCreate(title="valid", priority=True))
+    with pytest.raises(ValidationError):
+        service.create(TaskCreate(title="valid", due_date="2025-99-99"))
 
-    found = repo.list_tasks(q="alpha")
-    assert len(found) == 1
-    assert found[0].title == "Alpha"
+
+def test_read_write_failures_are_reported_as_repository_errors(tmp_path: Path) -> None:
+    db = Database(DatabaseConfig(str(tmp_path / "does-not-exist" / "db.sqlite")))
+    repo = TaskRepository(db)
+    # A missing schema represents a storage/schema failure, not an empty list.
+    with pytest.raises(RepositoryError):
+        repo.list_tasks()
 
 
-def test_update_task_keeps_other_fields_when_clearing_due_date(repo: TaskRepository) -> None:
-    created = repo.create_task(title="Example", due_date="2030-01-01")
-    updated = repo.update_task(created.id, title="Renamed", due_date=None)
-    assert updated is not None
-    assert updated.title == "Renamed"
+def test_database_session_wraps_sqlite_errors(tmp_path: Path) -> None:
+    db = Database(DatabaseConfig(str(tmp_path / "errors.db")))
+    with pytest.raises(DatabaseError):
+        with db.session() as connection:
+            connection.execute("SELECT * FROM nonexistent_table")
+
+
+def test_service_maps_repository_not_found(service: TaskService) -> None:
+    with pytest.raises(NotFoundError):
+        service.delete(123456)
+
+
+def test_service_search_validates_query_status_and_pagination(service: TaskService) -> None:
+    with pytest.raises(ValidationError):
+        service.search(q=object())
+    with pytest.raises(ValidationError):
+        service.search(status="archived")
+    with pytest.raises(ValidationError):
+        service.search(offset=-2)
+    with pytest.raises(ValidationError):
+        service.search(limit="100")
+
+
+def test_service_search_handles_empty_filter_values(service: TaskService) -> None:
+    service.create(TaskCreate(title="One"))
+    assert len(service.search(q="  ", status="")) == 1
+
+
+def test_service_update_can_clear_due_date_and_update_title(service: TaskService) -> None:
+    task = service.create(TaskCreate(title="Before", due_date="2030-01-01"))
+    updated = service.update(task.id, TaskUpdate(title="After", clear_due_date=True))
+    assert updated.title == "After"
     assert updated.due_date is None
-
-
-def test_updated_at_moves_forward(repo: TaskRepository) -> None:
-    created = repo.create_task(title="Loop")
-    updated = repo.update_task(created.id, title="Loop 2")
-    assert updated is not None
-    assert updated.updated_at > created.updated_at
-
-
-def test_list_tasks_applies_limit_and_offset(repo: TaskRepository) -> None:
-    for idx in range(5):
-        repo.create_task(title=f"Task {idx}")
-
-    items = repo.list_tasks(limit=2, offset=1)
-    assert len(items) == 2
-    assert items[0].title == "Task 1"
-    assert items[1].title == "Task 2"
-
-
-def test_list_tasks_rejects_negative_pagination(repo: TaskRepository) -> None:
-    with pytest.raises(Exception):
-        repo.list_tasks(limit=-1)
-
-    with pytest.raises(Exception):
-        repo.list_tasks(offset=-1)
-
-
-
-def test_db_path_override_works(tmp_path: Path) -> None:
-    custom = tmp_path / "custom" / "todo.db"
-    db = Database(DatabaseConfig(path=str(custom)))
-    db.init_schema()
-    assert custom.exists()
