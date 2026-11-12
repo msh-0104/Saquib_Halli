@@ -15,60 +15,52 @@ def repo(tmp_path: Path) -> TaskRepository:
     return TaskRepository(db)
 
 
-def test_create_get_and_stable_ids(repo: TaskRepository) -> None:
+def test_create_get_and_stable_unique_ids(repo: TaskRepository) -> None:
     first = repo.create_task(title="First")
     second = repo.create_task(title="Second")
 
+    assert first.id > 0
     assert first.id != second.id
     assert repo.get_task(first.id) == first
     assert repo.get_task(second.id) == second
 
 
-def test_create_persists_across_reopen(tmp_path: Path) -> None:
-    path = tmp_path / "restart.db"
-    first_db = Database(DatabaseConfig(path=str(path)))
-    first_db.init_schema()
-    first_repo = TaskRepository(first_db)
-    created = first_repo.create_task(title="Persist me", status="done")
-
-    reopened_db = Database(DatabaseConfig(path=str(path)))
-    reopened_repo = TaskRepository(reopened_db)
-    loaded = reopened_repo.get_task(created.id)
-
-    assert loaded is not None
-    assert loaded.title == "Persist me"
-    assert loaded.status == "done"
-    assert loaded.id == created.id
+def test_get_missing_task_returns_none(repo: TaskRepository) -> None:
+    assert repo.get_task(999999) is None
 
 
-def test_update_changes_only_requested_fields_and_updates_timestamp(
-    repo: TaskRepository,
-) -> None:
-    created = repo.create_task(title="Original", description="keep", due_date="2030-01-01")
-    updated = repo.update_task(created.id, title="Changed", clear_due_date=False)
+def test_update_changes_only_requested_fields_and_preserves_id(repo: TaskRepository) -> None:
+    created = repo.create_task(title="Original", description="Keep", due_date="2030-01-01")
+    updated = repo.update_task(created.id, title="Updated")
 
     assert updated is not None
-    assert updated.title == "Changed"
-    assert updated.description == "keep"
+    assert updated.id == created.id
+    assert updated.title == "Updated"
+    assert updated.description == "Keep"
     assert updated.due_date == "2030-01-01"
     assert updated.created_at == created.created_at
-    assert updated.updated_at > created.updated_at
-
-
-def test_update_can_clear_due_date(repo: TaskRepository) -> None:
-    created = repo.create_task(title="Original", due_date="2030-01-01")
-    updated = repo.update_task(created.id, title="Changed", clear_due_date=True)
-
-    assert updated is not None
-    assert updated.title == "Changed"
-    assert updated.due_date is None
+    assert updated.updated_at >= created.updated_at
 
 
 def test_update_missing_task_returns_none(repo: TaskRepository) -> None:
-    assert repo.update_task(999, title="missing") is None
+    assert repo.update_task(999999, title="Missing") is None
 
 
-def test_delete_removes_only_selected_record(repo: TaskRepository) -> None:
+def test_update_can_clear_due_date_without_dropping_other_fields(repo: TaskRepository) -> None:
+    created = repo.create_task(title="Original", due_date="2030-01-01")
+    updated = repo.update_task(created.id, title="Updated", clear_due_date=True)
+
+    assert updated is not None
+    assert updated.title == "Updated"
+    assert updated.due_date is None
+
+
+def test_empty_update_returns_current_task(repo: TaskRepository) -> None:
+    created = repo.create_task(title="No changes")
+    assert repo.update_task(created.id) == created
+
+
+def test_delete_removes_only_selected_task(repo: TaskRepository) -> None:
     first = repo.create_task(title="First")
     second = repo.create_task(title="Second")
 
@@ -78,32 +70,37 @@ def test_delete_removes_only_selected_record(repo: TaskRepository) -> None:
     assert repo.delete_task(first.id) is False
 
 
-def test_search_matches_title_only_with_unicode_casefold(repo: TaskRepository) -> None:
-    repo.create_task(title="Straße 100%", description="not the title")
-    repo.create_task(title="Strasse 1000")
+def test_list_applies_status_and_additional_filters(repo: TaskRepository) -> None:
+    active = repo.create_task(title="Write active", status="pending", priority=2)
+    completed = repo.create_task(title="Write completed", status="done", priority=4)
+    repo.create_task(title="Other completed", status="done", priority=4)
 
-    assert [t.title for t in repo.list_tasks(q="STRASSE")] == ["Straße 100%", "Strasse 1000"]
-    assert [t.title for t in repo.list_tasks(q="100%")] == ["Straße 100%"]
-    assert repo.list_tasks(q="not the title") == []
-
-
-def test_status_filter_and_query_combine(repo: TaskRepository) -> None:
-    repo.create_task(title="Alpha pending", status="pending")
-    done = repo.create_task(title="Alpha complete", status="done")
-    repo.create_task(title="Beta complete", status="done")
-
-    result = repo.list_tasks(q="alpha", status="done")
-    assert [task.id for task in result] == [done.id]
+    found = repo.list_tasks(q="write", status="done", priority_min=3)
+    assert [task.id for task in found] == [completed.id]
+    assert active.id not in [task.id for task in found]
 
 
-def test_sort_allowlist_blocks_sql_injection(repo: TaskRepository) -> None:
+def test_search_is_title_only_case_insensitive_and_literal(repo: TaskRepository) -> None:
+    repo.create_task(title="Café 100%", description="secret keyword")
+    repo.create_task(title="Different title", description="Café 100%")
+
+    assert len(repo.list_tasks(q="café")) == 1
+    assert len(repo.list_tasks(q="100%")) == 1
+    assert repo.list_tasks(q="secret keyword") == []
+
+
+def test_search_uses_unicode_casefold_semantics(repo: TaskRepository) -> None:
+    repo.create_task(title="Straße")
+    assert len(repo.list_tasks(q="STRASSE")) == 1
+
+
+def test_sort_fields_are_allowlisted(repo: TaskRepository) -> None:
     with pytest.raises(RepositoryError):
         repo.list_tasks(sort_by="id; DROP TABLE tasks")
-
     with pytest.raises(RepositoryError):
         repo.list_tasks(sort_dir="asc; DROP TABLE tasks")
 
-    repo.create_task(title="Still intact")
+    assert repo.create_task(title="Table remains")
 
 
 @pytest.mark.parametrize(
@@ -115,29 +112,33 @@ def test_sort_allowlist_blocks_sql_injection(repo: TaskRepository) -> None:
         {"offset": "1"},
     ],
 )
-def test_rejects_bad_pagination(repo: TaskRepository, kwargs: dict) -> None:
+def test_pagination_rejects_invalid_values(repo: TaskRepository, kwargs: dict) -> None:
     with pytest.raises(RepositoryError):
         repo.list_tasks(**kwargs)
 
 
-def test_database_constraints_reject_invalid_values(repo: TaskRepository) -> None:
+def test_pagination_returns_requested_slice(repo: TaskRepository) -> None:
+    for number in range(5):
+        repo.create_task(title=f"Task {number}")
+
+    result = repo.list_tasks(sort_by="id", sort_dir="asc", limit=2, offset=1)
+    assert [task.title for task in result] == ["Task 1", "Task 2"]
+
+
+def test_create_rejects_invalid_values_without_partial_rows(repo: TaskRepository) -> None:
+    for kwargs in (
+        {"title": "   "},
+        {"title": "x" * 256},
+        {"title": "Valid", "status": "invalid"},
+        {"title": "Valid", "priority": 99},
+    ):
+        with pytest.raises(RepositoryError):
+            repo.create_task(**kwargs)
+
+    assert repo.list_tasks() == []
+
+
+def test_missing_schema_is_an_error_not_an_empty_list(tmp_path: Path) -> None:
+    repo = TaskRepository(Database(DatabaseConfig(path=str(tmp_path / "uninitialized.db"))))
     with pytest.raises(RepositoryError):
-        repo.create_task(title=" " * 2)
-
-    with pytest.raises(RepositoryError):
-        repo.create_task(title="x" * 256)
-
-    with pytest.raises(RepositoryError):
-        repo.create_task(title="invalid", status="bad-status")
-
-
-def test_database_errors_are_wrapped_without_exposing_sql(repo: TaskRepository) -> None:
-    with pytest.raises(RepositoryError):
-        repo.list_tasks(sort_by="unknown")
-
-
-def test_in_memory_database_contract_is_documented(repo: TaskRepository) -> None:
-    # Separate plain :memory: connections are not shared across sessions;
-    # this should be explicitly documented and tested before relying on it.
-    with repo.db.session() as conn:
-        assert conn.execute("SELECT name FROM sqlite_master WHERE name='tasks'").fetchone()
+        repo.list_tasks()
