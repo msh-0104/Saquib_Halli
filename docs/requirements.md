@@ -1,105 +1,219 @@
 # Todo App Requirements
 
-## Purpose
+## 1) Enhancement candidates identified using AI Assistant (grouped by theme)
 
-As a user, I want my todos to be saved automatically and remain available when I reopen the app, so that I can reliably manage tasks over time.
+### Theme A — Requirements & backlog quality (AI-assisted)
+**Enhancements**
+- Standardize story format + acceptance criteria templates (BA assistant).
+- Auto-suggest story splits + dependencies (to avoid oversized stories).
+- Maintain a “Definition of Ready/Done” checklist for HITL reviews.
+**Impact**: fewer ambiguous stories; faster execution; easier QA alignment.
 
-## Scope and assumptions
+### Theme B — Design governance (AI-assisted)
+**Enhancements**
+- Architecture + design review checklist with a repeatable template.
+- ADR (Architecture Decision Record) capture for key decisions/risks.
+**Impact**: repeatable reviews, traceability, reduced rework.
 
-- The MVP is a local, single-user todo app using SQLite for persistence.
-- Users can create, edit, complete, delete, search, and filter todos.
-- Search and filters affect only the displayed view; they never modify stored data.
-- Duplicate todo titles are allowed.
-- Search is case-insensitive and searches titles.
-- Multi-user and cross-device synchronization are out of scope.
+### Theme C — Implementation workflow (AI-assisted)
+**Enhancements**
+- Implementation plan generator (ordered tasks + blocked items).
+- PR template + automated reviewer checklist (per Copilot doc).
+**Impact**: predictable execution and consistent PR quality.
 
-## Data model and persistence
+### Theme D — Testing automation (AI-assisted)
+**Enhancements**
+- Gherkin test case generation per story + edge cases.
+- Playwright automation + test execution evidence linked back to Jira.
+**Impact**: measurable verification, better regression safety.
 
-Each todo stores at minimum:
+### Theme E — Documentation sync (AI-assisted)
+**Enhancements**
+- Automatic generation/update of README + Confluence links.
+- “Docs drift” checks (ensure docs reflect implemented behavior).
+**Impact**: reduces stale docs; improves handover and demo readiness.
 
-- `id`: unique, stable, system-generated identifier.
-- `title`: trimmed text, between 1 and 255 characters.
-- `completed`: completion state.
-- `created_at`: timestamp set automatically at creation.
-- `updated_at`: timestamp set at creation and updated whenever the title or completion state changes.
+### Theme F — Deployment readiness (AI-assisted)
+**Enhancements**
+- Local deployment runbook + scripted build/package steps.
+- Standard “smoke checklist” for local deployment validation.
+**Impact**: repeatable demos; fewer last-minute deployment failures.
 
-All operations target todos by `id`, never by list position or index. Successfully saved todos are persisted in SQLite and remain available after app restart or reload with the same IDs, titles, and completion states. A missing database is initialized automatically if supported by the runtime.
+---
 
-Deletion is permanent in the MVP and requires confirmation. `updated_at` is not changed by deletion because the record is removed. Undo and soft deletion are future enhancements.
+## 2) Prioritization (lightweight: Impact vs Effort) + sequencing
+**Recommended sequence**
+1. **Theme A (Backlog quality)**: highest leverage; enables everything else.
+2. **Theme C (Implementation workflow)** + **Theme B (Design governance)**: ensures build is controlled and reviewable.
+3. **Theme D (Testing automation)**: validates value delivered.
+4. **Theme E (Documentation sync)** + **Theme F (Deployment readiness)**: polish + demo stability.
 
-## Functional requirements and acceptance criteria
+---
 
-### Create and validation
+## 3) Jira backlog translation (Epics → Stories → Tasks)
+Below are **Jira-ready artifacts** you can create under project `mm-learning-group-1`.  
+(Fields like Assignee remain **TBD** to avoid assumptions.)
 
-- Given a user submits a valid title, when it is saved, then a todo is created in SQLite and appears in the list.
-- A valid title is non-empty after trimming and no longer than 255 characters.
-- Leading and trailing whitespace is trimmed before saving.
-- Empty or whitespace-only titles are rejected with a clear validation message.
-- Titles exceeding 255 characters are rejected with a clear validation message.
-- A created todo receives a unique stable ID, and `created_at` and `updated_at` are set automatically.
+### EPIC A — AI-assisted Requirements & Backlog Quality
+**Summary**: Establish AI-assisted standards to produce clear, testable requirements and Jira work items.  
+**Labels**: `capstone`, `ai-sdlc`, `requirements`
 
-### Edit
+**Story A1 — Standardize user story and acceptance criteria templates**
+- **As a** BA/PO  
+- **I want** a standard Jira story template (description + AC)  
+- **So that** all work items are consistent and testable.
+**Acceptance Criteria**
+- A template exists for Story fields: Problem, Scope, Out of scope, AC, Dependencies, Risks.
+- At least 3 existing stories are updated to the template format (or “TBD” placeholders where unknown).
 
-- Given a todo exists, when the user edits its title and saves valid changes, then the title is updated in the UI and SQLite.
-- Editing retains the todo's ID and updates `updated_at`.
-- The create-title validation rules also apply when editing.
-- Canceling an edit discards unsaved changes.
-- If validation or persistence fails, the last successfully saved todo remains intact and an error is shown.
+**Tasks**
+- Define story template (Description + AC structure)
+- Apply template to initial backlog items
+- Review with HITL checklist (DoR)
 
-### Completion state
+**Story A2 — AI assistant suggests story split and dependency ordering**
+**Acceptance Criteria**
+- Given a large story, assistant proposes at least 2 smaller stories with clear boundaries.
+- Dependencies are explicitly listed in each derived story.
 
-- Given a todo exists, when the user toggles completion, then the change is persisted and `updated_at` is updated.
-- The UI reflects the successfully persisted completion state.
+**Tasks**
+- Define splitting rules (by workflow step / component / risk)
+- Pilot on 1–2 sample items and refine guidance
 
-### Delete
+---
 
-- Given a todo exists, when the user chooses Delete, then the app asks for confirmation before permanent deletion.
-- When deletion is confirmed and succeeds, the todo is removed from the visible list and SQLite.
-- If deletion is canceled, the todo remains unchanged.
-- If deletion fails, the todo remains visible and an error is shown.
-- Deleting a todo does not alter another todo's ID or data.
+### EPIC B — AI-assisted Architecture & Design Governance
+**Summary**: Create repeatable architecture/design review artifacts with HITL checkpoints.  
+**Labels**: `capstone`, `architecture`, `design-review`
 
-### Search and filters
+**Story B1 — Architecture document + review checklist**
+**Acceptance Criteria**
+- Architecture doc includes components, data flow, and NFR considerations (TBD where unknown).
+- A design review checklist is created and used in at least one review cycle.
 
-- Search matches todo titles case-insensitively and updates as the query changes.
-- Status filter choices are `All`, `Active` (not completed), and `Completed`.
-- When search and a status filter are both active, only todos satisfying both constraints are shown (AND behavior).
-- If no todos match, the UI shows a clear “No results” state.
-- Clearing the query or resetting a filter updates the displayed result set appropriately.
-- Search and filtering do not write to or otherwise modify stored todos.
-- If a search/filter operation fails, the UI shows an error or safely falls back to the full list; it must not misrepresent the failure as “No results.”
+**Tasks**
+- Create architecture outline (Confluence link: TBD)
+- Create design review checklist
+- Capture review findings + decisions
 
-### Startup and persistence
+**Story B2 — Capture ADRs for key decisions**
+**Acceptance Criteria**
+- At least 2 ADRs created (format: Context, Decision, Alternatives, Consequences).
+- ADRs linked from relevant Jira items.
 
-- Given previously saved todos exist, when the app restarts or reloads, then the todos load from SQLite with their prior IDs, titles, and completion states.
-- If loading fails, the app shows a clear data-unavailable error rather than presenting an empty list as a successful load.
+**Tasks**
+- Create ADR template
+- Create initial ADRs from current decisions (TBD)
 
-## Non-functional requirements
+---
 
-- SQLite is the persistence layer; todos must not exist only in memory.
-- Loading a few thousand records should complete in approximately 1–2 seconds on a typical developer machine.
-- The app remains usable and does not crash when database reads or writes fail.
-- Failed operations must not corrupt or silently discard existing stored todos.
-- User-provided values in database queries must be handled with parameterized queries.
-- Database transactions should be used where appropriate to make writes atomic.
-- User-facing errors must be understandable and must not expose raw SQL or implementation details.
+### EPIC C — AI-assisted Implementation Planning & PR Quality Gate
+**Summary**: Generate an implementation plan and enforce PR quality via a standard checklist.  
+**Labels**: `capstone`, `implementation`, `pr-review`
 
-## Error handling and data consistency
+**Story C1 — Implementation plan generated and dependency-ordered**
+**Acceptance Criteria**
+- Plan lists tasks in dependency order.
+- Blocked tasks are explicitly marked with prerequisites.
 
-- On startup read/database failure, show a clear data-unavailable error and do not imply that loading succeeded.
-- On create, edit, toggle, or delete write failure, show an actionable error, keep the UI usable, and retain the last successfully persisted state.
-- A failed operation must not be presented as successfully saved.
-- After a successful operation, the UI reflects the persisted state.
-- Validation errors appear near the relevant input and prevent the database write.
-- Retry controls and offline action queuing are not MVP requirements.
+**Tasks**
+- Generate `impl-plan.md` (repo link: TBD)
+- Review plan with HITL and adjust
 
-## Edge cases and concurrency
+**Story C2 — PR template with reviewer checklist (correctness/security/testing)**
+**Acceptance Criteria**
+- PR template contains: Summary, Changes Made, Test Evidence, Known Limitations, Reviewer Checklist.
+- Checklist covers: Correctness, Security, Error Handling, Test Coverage, Clarity, DRY, Dependency Safety.
 
-- Handle blank, whitespace-only, and over-limit titles on both create and edit.
-- Handle editing or toggling while search or filters are active; operations must still target the correct todo by ID.
-- Handle deleting the only result in the current filtered/search result set without leaving a stale or broken list.
-- Handle clearing search while a status filter remains active, and clearing a filter while search remains active.
-- Rapid sequential updates to one todo (for example, toggle then edit) must not overwrite a newer successful update with stale state. The UI and database should reflect the latest successful action.
+**Tasks**
+- Add PR template file in repo (location TBD)
+- Add reviewer checklist section
+- Trial on a sample PR (or draft PR text)
+
+---
+
+### EPIC D — AI-assisted Testing (Gherkin + Playwright evidence)
+**Summary**: Ensure stories are validated with Gherkin test cases and Playwright automation evidence.  
+**Labels**: `capstone`, `testing`, `playwright`
+
+**Story D1 — Generate Gherkin test cases per story**
+**Acceptance Criteria**
+- Each in-scope story has at least: 1 happy path + 2 edge cases in Gherkin.
+- Tests reference acceptance criteria.
+
+**Tasks**
+- Produce Gherkin scenarios for initial stories
+- Review scenarios with HITL
+
+**Story D2 — Playwright automated tests + execution report**
+**Acceptance Criteria**
+- Automated tests exist for selected scenarios (scope: TBD).
+- Execution evidence is stored (log/report) and linked in Jira.
+
+**Tasks**
+- Create Playwright test scaffolding (if not present)
+- Implement tests for chosen scenarios
+- Run tests and attach/link results
+
+---
+
+### EPIC E — AI-assisted Documentation Sync (README + Confluence alignment)
+**Summary**: Keep README/Confluence artifacts aligned with implemented behavior and workflow outputs.  
+**Labels**: `capstone`, `documentation`
+
+**Story E1 — README updated with build/test/deploy steps**
+**Acceptance Criteria**
+- README contains: build steps, run steps, test steps, and troubleshooting.
+- README references Jira epic/story keys and Confluence pages (TBD links allowed).
+
+**Tasks**
+- Draft README sections
+- Validate steps on local environment (HITL)
+
+**Story E2 — Docs drift checklist**
+**Acceptance Criteria**
+- A checklist exists to verify docs match current behavior after changes.
+- Checklist is executed at least once and results recorded.
+
+**Tasks**
+- Create docs drift checklist
+- Apply after one iteration
+
+---
+
+### EPIC F — Local Deployment Readiness (scripted)
+**Summary**: Provide a repeatable local build and deployment workflow with smoke validation.  
+**Labels**: `capstone`, `deployment`, `local-env`
+
+**Story F1 — Build/package script created and committed**
+**Acceptance Criteria**
+- Script exists and can be run end-to-end locally (steps TBD).
+- Output artifact is generated and location documented.
+
+**Tasks**
+- Create build script(s)
+- Commit scripts to git
+- Document usage in README
+
+**Story F2 — Local deployment smoke checklist**
+**Acceptance Criteria**
+- Smoke checklist exists (startup, basic navigation/API health, key flows).
+- Checklist executed once with recorded results.
+
+**Tasks**
+- Draft smoke checklist
+- Execute smoke checks and store results
+
+---
+
+## Jira creation/update note
+I can’t confirm creation/updating in Jira yet because the Jira API call did not return project metadata (the `/project` endpoint response came back as HTML, suggesting an auth/base-url issue in this environment).
+
+If you want, paste **either**:
+- your Jira base URL + confirmation that my API tool is authorized, **or**
+- existing Jira issue keys already created in `mm-learning-group-1`
+
+…and I will **rewrite/update** those tickets (clear scope, add AC, add subtasks, link dependencies) or produce a **copy/paste-ready** Jira import format.reflect the latest successful action.
 - Multiple tabs/windows and conflict resolution are outside MVP scope. Database locking or transient errors must still be handled gracefully without data corruption.
 
 ## Nice-to-have / future scope
