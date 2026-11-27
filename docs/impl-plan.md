@@ -1,239 +1,301 @@
 # Todo App — Prioritized Implementation Plan
 
-## Purpose
+```md
+# Brownfield Todo App Enhancements — Implementation Plan (docs/impl-plan.md)
 
-This plan decomposes the local, single-user SQLite todo architecture in `architecture.md` and the findings in `design-review.md` into prioritized tasks with explicit dependencies and blockers. The order is dependency-first: resolve product/schema prerequisites, establish safe persistence, then build service and UI behavior, followed by search, failure testing, and performance verification.
+Repo: **msh-0104/Saquib_Halli**  
+Jira Epic: **MM-1 — Brownfield Todo App Enhancements**  
+Process Stories: **MM-5..MM-14** (Subtasks: **MM-15..MM-20**)  
+Top 5 Enhancements: SQLite persistence, CRUD edit/delete, Search/Filter, Priority/Sorting, Due Dates/Urgency Views
 
-## Status key
+> IMPORTANT: `docs/impl-plan.md` previously contained an unrelated “Automated Documentation Sync Agent” plan.
+> This file is now repurposed to document the Todo App enhancement plan.
 
-- **READY** — can begin when listed dependencies are complete.
-- **BLOCKED** — requires an explicit prerequisite or owner decision before implementation.
-- **VERIFY** — validate through tests or measurement before calling complete.
+---
 
-## Critical prerequisite and blockers
+## 0) Purpose
+Provide a dependency-ordered, execution-ready plan to deliver and validate the **Top 5 shortlisted enhancements** for the Brownfield Todo App.  
+This document is the **source of truth** and should be linked from Jira **MM-8** and Epic **MM-1**.
 
-### P-0 — Reconcile the requirements source (**BLOCKED — must resolve first**)
+---
 
-The current `docs/requirements.md` in the repository describes automated documentation synchronization, while `architecture.md` and `design-review.md` describe a todo application. These are inconsistent sources of truth. Before implementation, the product owner must either:
+## 1) Scope
 
-1. Correct/replace `docs/requirements.md` with the approved todo requirements, or
-2. Identify the authoritative todo requirements document and update architecture/design-review links to point to it.
+### 1.1 In scope (Top 5 enhancements)
+1. **Persistent Local SQLite Database Storage** (Jira: **MM-2**)
+2. **Task Edit & Delete CRUD Operations** (Jira: **MM-3**)
+3. **Multi-Condition Search & Status Filtering** (Jira: **MM-4**)
+4. **Task Priority Levels & Sorting** (Jira: **TBD** – create story under MM-1)
+5. **Due Dates & Urgency Views** (Jira: **TBD** – create story under MM-1)
 
-**Exit criteria:** One approved, version-controlled requirements source clearly defines the todo MVP. Do not treat the documentation-sync requirements as the todo product specification.
+### 1.2 Out of scope (for this release)
+- Cloud sync / remote DB / multi-device sync
+- Multi-user auth/roles
+- Major UI redesign beyond what is required for these features
+- Analytics/telemetry (unless later requested)
 
-### P-1 — Confirm architecture recommendations (**BLOCKED for affected tasks**)
+### 1.3 Success criteria (release-level)
+- Tasks persist via SQLite with **stable IDs**; app reloads correctly after restart.
+- Users can **edit** and **delete** tasks; changes persist correctly.
+- Users can **search** and **filter** using multiple conditions (minimum: text + status).
+- Users can set **priority** and sort; ordering is predictable and stable.
+- Users can set **due dates** and view by urgency (Overdue / Due Today / Upcoming / None).
+- For each enhancement: **AC → Gherkin → Playwright** traceability exists and evidence is linked.
+- Local runbook exists and smoke validation passes.
 
-The design review records the following as recommendations pending owner confirmation, not approved decisions:
+---
 
-- Preserve the existing `tasks` table and map `pending`/`done` to a domain completion boolean; retain extra fields.
-- Use a stable OS-appropriate application-data directory.
-- Define Unicode case-insensitive search semantics and use Python `casefold()` initially.
-- Choose UTC timestamp representation and guarantee `updated_at` advances on every successful modification.
-- Define backup/recovery guidance for corruption or I/O failure.
+## 2) Jira mapping (Top 5 ↔ stories) + dependency order
 
-**Exit criteria:** Owner records decisions for these items. Schema, storage path, search, timestamps, and recovery tasks below are blocked until their relevant choices are confirmed.
+| # | Enhancement | Jira Key | Depends on | Notes |
+|---:|---|---|---|---|
+| 1 | SQLite persistence | MM-2 | — | Foundation: persistence + stable IDs |
+| 2 | Edit/Delete CRUD | MM-3 | MM-2 | Must use stable IDs for correctness |
+| 3 | Priority + Sorting | TBD | MM-2 | Adds data attributes for filtering/sorting |
+| 4 | Due Dates + Urgency | TBD | MM-2 | Adds due_date + new views |
+| 5 | Search + Status Filtering | MM-4 | MM-2, (TBD Priority), (TBD Due Dates) | Prefer DB query; AND semantics |
 
-### P-2 — Identify presentation entry point (**BLOCKED for UI integration**)
+---
 
-The architecture intentionally leaves the UI framework/entry point open.
+## 3) Governance (MM-5..MM-14)
 
-**Exit criteria:** Identify the app entry point and confirm whether implementation targets the existing CLI/UI or a new presentation adapter. Backend/service work can proceed after P-0; UI integration cannot.
+### 3.1 Milestones / gates
+| Milestone | Jira | Exit criteria |
+|---|---|---|
+| M1 Candidate list complete | MM-5 | Candidate list + themes/value + HITL notes captured |
+| M2 Prioritization locked (Top 5) | MM-6 | Impact/Effort + dependency order + risks |
+| M3 Requirements standardized | MM-7 | Template created + Top 5 stories updated (or ≥3 minimum) |
+| M4 Plan baseline | MM-8 | This file updated and linked in Jira |
+| M5 Design governance ready | MM-9 | Design checklist used; decisions/risks recorded |
+| M6 PR governance ready | MM-10 | PR template + review checklist used on ≥1 PR |
+| M7 Test design ready | MM-11 | Gherkin scenarios for Top 5, traceable to AC |
+| M8 Automation evidence ready | MM-12 | Playwright executed; report/log linked; failures tracked |
+| M9 Docs + runbook complete | MM-13/MM-14 | Confluence links verified + local runbook smoke validated |
 
-## Prioritized dependency-ordered tasks
+### 3.2 Cadence
+- **2×/week execution sync (15–20 min):** blockers/dependencies/next actions
+- **Weekly milestone review (30 min):** gate completion + scope decisions
 
-### Phase 0 — Product and design decisions
+### 3.3 Weekly status template
+- RAG:
+- Done (Jira keys + PR/test/doc links):
+- In progress:
+- Next:
+- Risks/Blockers:
+- Decisions needed:
 
-#### T-001 — Establish the authoritative todo requirements
-- **Priority:** P0 / Critical
-- **Status:** BLOCKED by P-0
-- **Dependencies:** None
-- **Work:** Resolve the conflicting requirements document and approve the todo MVP scope, data fields, validation, search/filter semantics, error behavior, and performance target.
-- **Done when:** There is one approved requirements source; architecture/design-review links are accurate.
+---
 
-#### T-002 — Approve data-model compatibility and migration direction
-- **Priority:** P0 / Critical
-- **Status:** BLOCKED by T-001 and P-1
-- **Dependencies:** T-001
-- **Work:** Choose whether to retain `tasks.status` and map `pending`/`done`, or migrate to a persisted `completed` field. Decide whether description, priority, and due-date columns remain supported. Define behavior for existing database files.
-- **Done when:** A written decision identifies the authoritative persisted completion representation, migration requirements, and preservation rules.
+## 4) RAID log (starter)
 
-#### T-003 — Approve database location and recovery policy
-- **Priority:** P0 / Critical
-- **Status:** BLOCKED by T-001 and P-1
-- **Dependencies:** T-001
-- **Work:** Confirm stable application-data directory, configuration override, backup guidance, and user-facing behavior for corruption/read-only/disk-full errors. Confirm that an unreadable database must not be overwritten or silently recreated.
-- **Done when:** Runtime path and recovery behavior are documented.
+| ID | Type | Description | Impact | Likelihood | Mitigation | Owner |
+|---|---|---:|---:|---:|---|---|
+| R1 | Risk | Priority & Due Date stories not created in Jira | Med | Med | Create both stories; link to MM-1; update keys here | PO/Lead |
+| R2 | Risk | Local build/run instability blocks Playwright | High | Med | Complete MM-14 early; define smoke steps; pin versions | Dev/DevOps |
+| R3 | Risk | Flaky E2E tests | Med | Med | Stable selectors; deterministic test data; retries policy | QA |
+| R4 | Risk | SQLite migration/data regression | High | Med | Migration strategy + reset plan; repo/unit tests | Dev |
+| R5 | Risk | Missing evidence links in Jira | Low | High | Add “Evidence links” per enhancement; final link audit | Tech Lead |
 
-#### T-004 — Approve search and timestamp semantics
-- **Priority:** P1 / High
-- **Status:** BLOCKED by T-001 and P-1
-- **Dependencies:** T-001
-- **Work:** Confirm locale-independent Unicode case-insensitive contains search and select a UTC timestamp representation/strict advancement strategy for `updated_at`.
-- **Done when:** Search behavior and timestamp guarantees are testable and unambiguous.
+---
 
-#### T-005 — Identify presentation interface
-- **Priority:** P1 / High
-- **Status:** BLOCKED by P-2
-- **Dependencies:** T-001
-- **Work:** Identify existing app entry point and decide which UI/CLI adapter will call application services.
-- **Done when:** UI integration target and interaction pattern are documented. Do not introduce a new UI framework without approval.
+## 5) Cross-cutting standards (must apply)
 
-### Phase 1 — Persistence foundation
+### 5.1 PR / review gate (MM-10)
+- Use PR template
+- Reviewer checklist must cover: correctness, error handling, test evidence, maintainability, security (as applicable)
 
-#### T-010 — Define domain model and persistence mapping
-- **Priority:** P0 / Critical
-- **Status:** BLOCKED pending T-002
-- **Dependencies:** T-002
-- **Work:** Define the Python todo/domain representation and mapping to the selected existing or migrated SQLite schema. Keep one source of truth for completion.
-- **Done when:** Model and mapping tests cover IDs, title, completion, and timestamps, including legacy status mapping if retained.
+### 5.2 Design gate (MM-9)
+- Use design review checklist
+- Record decisions and risks (link to Confluence from Jira MM-9/MM-13)
 
-#### T-011 — Implement stable database path and connection configuration
-- **Priority:** P0 / Critical
-- **Status:** BLOCKED pending T-003
-- **Dependencies:** T-003
-- **Work:** Update `src/database.py` to use the approved stable app-data path, support an explicit test/development override, create parent directories safely, set a bounded SQLite busy timeout, and surface permission/open errors.
-- **Done when:** Tests prove path stability independent of current working directory, configuration override works, and open/permission failures become typed storage errors.
+### 5.3 Testing gate (MM-11/MM-12)
+- Maintain traceability: **Story AC → Gherkin → Playwright**
+- Minimum per enhancement: **1 happy path + 2 edge cases** (or mark TBD with reason)
 
-#### T-012 — Add schema versioning and safe initialization/migrations
-- **Priority:** P0 / Critical
-- **Status:** BLOCKED pending T-002; depends on T-010 and T-011
-- **Dependencies:** T-010, T-011
-- **Work:** Implement schema version tracking (`PRAGMA user_version` or equivalent); make initialization idempotent; add only the migration selected in T-002; ensure migration failures roll back and do not replace the original database.
-- **Done when:** Fresh database setup, current-schema open, upgrade path, and migration failure are covered by tests. Existing records, IDs, and timestamps survive the approved migration.
+---
 
-#### T-013 — Define transactions, storage error types, and rollback behavior
-- **Priority:** P0 / Critical
-- **Status:** READY after T-011
-- **Dependencies:** T-011
-- **Work:** Define storage exception categories (unavailable, busy/locked, integrity, migration/corruption, I/O/permission); use explicit transaction boundaries for mutations; guarantee rollback on failure; avoid unbounded retries.
-- **Done when:** Unit tests simulate failed writes and locked/read-only scenarios; no failed operation is reported as successful and committed data remains intact.
+## 6) Per-enhancement execution plans (Dev / QA / Docs)
 
-### Phase 2 — Repository and application behavior
+> For each enhancement below, fill “Evidence links” as you complete PRs/tests/docs.
 
-#### T-020 — Implement/align repository CRUD by stable ID
-- **Priority:** P0 / Critical
-- **Status:** READY after persistence foundation
-- **Dependencies:** T-010, T-012, T-013
-- **Work:** Adapt `src/repository.py` for create/get/list, field-specific title/completion updates, and permanent delete by ID. Bind all values as parameters. Return persisted records after commit.
-- **Done when:** Repository tests cover stable IDs, no reindexing dependency, timestamps, atomic operations, not-found results, and rollback on failure.
+---
 
-#### T-021 — Implement service validation and error translation
-- **Priority:** P0 / Critical
-- **Status:** READY after T-020
-- **Dependencies:** T-020
-- **Work:** Adapt `src/service.py` for title trimming, blank/whitespace rejection, 1–255 character validation, supported status mapping, not-found behavior, and safe application-level error mapping.
-- **Done when:** Service tests verify boundary lengths, whitespace (including Unicode whitespace), invalid input, not-found, and storage failure behavior.
+### 6.1 Enhancement 1 — Persistent Local SQLite Database Storage (MM-2)
 
-#### T-022 — Guarantee timestamp behavior
-- **Priority:** P1 / High
-- **Status:** BLOCKED pending T-004; depends on T-020
-- **Dependencies:** T-004, T-020
-- **Work:** Implement consistent UTC timestamps and ensure `updated_at` strictly advances on every committed title or completion update, including rapid successive updates. Preserve `created_at`.
-- **Done when:** Deterministic tests cover create, edit, toggle, rapid repeated mutations, and immutable `created_at`.
+**Goal:** Persist todos locally using SQLite with stable IDs and consistent read/write behavior.
 
-#### T-023 — Serialize rapid same-record mutations
-- **Priority:** P1 / High
-- **Status:** READY after T-020
-- **Dependencies:** T-020, T-021
-- **Work:** Add per-ID serialization or an equivalent ordered command mechanism at the service boundary. Use field-specific updates to prevent stale full-record overwrites. Define ordering as service acceptance order.
-- **Done when:** Concurrent/rapid toggle-then-edit and edit-then-toggle tests prove both intended field values survive and final persisted state follows accepted order.
+**Dev tasks**
+- [ ] Review current storage mechanism and data model
+- [ ] Define schema (tables/columns/constraints)
+- [ ] Implement repository/data-access layer
+- [ ] Implement initialization + schema versioning/migration
+- [ ] Ensure stable ID generation and mapping to UI model
+- [ ] Wire read-on-start and write-on-mutation flows
+- [ ] Error handling (open/write failure) + logging strategy
 
-### Phase 3 — Search and filtering
+**QA tasks**
+- [ ] Gherkin committed
+- [ ] Playwright: add task persists after restart; list reload correctness
+- [ ] Edge testing approach for DB failures documented (simulate or unit-test repository)
 
-#### T-030 — Implement search/filter use case with approved semantics
-- **Priority:** P1 / High
-- **Status:** BLOCKED pending T-004; depends on T-020 and T-021
-- **Dependencies:** T-004, T-020, T-021
-- **Work:** Implement case-insensitive title contains search and All/Active/Completed filters with AND behavior. Use Python `casefold()` or the approved alternative; do not rely on SQLite default `LIKE` for general Unicode case-insensitivity.
-- **Done when:** Tests cover ASCII and non-ASCII case pairs, substring matching, combined filters, query clearing, no matches, and that search/filter do not write data.
+**Gherkin placeholders**
+| ID | Scenario | Type |
+|---|---|---|
+| DB-HP-01 | Add a task and verify it persists after app restart | Happy |
+| DB-EC-01 | Add multiple tasks; verify stable IDs and no duplicates after reload | Edge |
+| DB-EC-02 | Failed write shows safe error state | Edge |
 
-#### T-031 — Validate search performance approach
-- **Priority:** P1 / High
-- **Status:** VERIFY after T-030
-- **Dependencies:** T-030, T-040
-- **Work:** Benchmark list load and live search using a representative dataset of a few thousand todos on the target runtime. Add UI debounce only if it improves responsiveness without violating expected live-search behavior. Reassess Python-side filtering versus SQLite/FTS based on results.
-- **Done when:** Results and environment are recorded; list-load target is approximately 1–2 seconds, and chosen search behavior is responsive. Any target miss has an agreed remediation.
+**Rollout / rollback**
+- Rollout: enable SQLite repo; smoke validate persistence
+- Rollback: revert PR; document any data loss implications
 
-### Phase 4 — Presentation and user-visible states
+**Evidence links**
+- PR(s):
+- Playwright report/log:
+- Design/decision notes:
+- Confluence:
 
-#### T-040 — Integrate presentation adapter with application services
-- **Priority:** P1 / High
-- **Status:** BLOCKED by T-005; depends on T-021
-- **Dependencies:** T-005, T-021
-- **Work:** Wire startup load and create/edit/toggle/delete actions to the service; pass IDs; display only persisted success state; avoid direct SQL from UI.
-- **Done when:** End-to-end flows work through the selected existing UI/CLI without bypassing service/repository boundaries.
+---
 
-#### T-041 — Implement validation, empty, loading, and storage error states
-- **Priority:** P1 / High
-- **Status:** BLOCKED by T-005; depends on T-040
-- **Dependencies:** T-005, T-040, T-013
-- **Work:** Present inline title errors; distinguish loading, loaded-empty, no-results, and data-unavailable states; show safe actionable errors for failed writes and preserve last committed state.
-- **Done when:** Manual and automated UI-facing tests verify each state and the app remains usable after failures.
+### 6.2 Enhancement 2 — Task Edit & Delete CRUD Operations (MM-3)
 
-#### T-042 — Implement delete confirmation and filtered-list reconciliation
-- **Priority:** P1 / High
-- **Status:** BLOCKED by T-005; depends on T-040
-- **Dependencies:** T-005, T-040, T-020
-- **Work:** Confirm permanent deletion before invoking the service; on failure keep the item visible; after success refresh the visible query/filter result correctly.
-- **Done when:** Cancel, successful delete, failed delete, and deletion of the last matching result all behave as required.
+**Goal:** Allow users to edit and delete tasks with correct UX and persistence.
 
-### Phase 5 — Quality, recovery validation, and release readiness
+**Dev tasks**
+- [ ] Decide edit UX and validations
+- [ ] Implement edit operation by stable ID
+- [ ] Implement delete (confirm UX if needed) by stable ID
+- [ ] Ensure UI refresh + empty state behavior
+- [ ] Ensure persistence correctness (depends on MM-2)
 
-#### T-050 — Build integration/restart/failure test coverage
-- **Priority:** P0 / Critical
-- **Status:** READY as foundational tests; complete after T-012 through T-042
-- **Dependencies:** T-012, T-020, T-021, T-030, T-040, T-041, T-042
-- **Work:** Add end-to-end tests for create/restart, edit/restart, toggle/restart, delete/restart, invalid input, failed read/write, migration, corruption fail-closed behavior, and rapid sequential updates.
-- **Done when:** Tests use temporary isolated databases, protect real data, and cover the requirements' manual QA cases.
+**QA tasks**
+- [ ] Playwright: edit persists after restart
+- [ ] Playwright: delete persists after restart
+- [ ] Edge: invalid edit; delete last item; delete under filters (if enabled)
 
-#### T-051 — Add recovery and operational guidance
-- **Priority:** P2 / Medium
-- **Status:** BLOCKED pending T-003
-- **Dependencies:** T-003, T-041
-- **Work:** Document where the database is stored, how to back it up, what users should do after corruption/read-only/disk-full errors, and what the app intentionally will not do automatically.
-- **Done when:** User-facing and developer recovery guidance matches the approved policy and does not imply automatic recovery where none exists.
+**Gherkin placeholders**
+| ID | Scenario | Type |
+|---|---|---|
+| CRUD-HP-01 | Edit an existing task and verify changes persist | Happy |
+| CRUD-HP-02 | Delete a task and verify it is removed | Happy |
+| CRUD-EC-01 | Invalid edits are rejected and not persisted | Edge |
+| CRUD-EC-02 | Delete then restart; task stays deleted | Edge |
 
-#### T-052 — Run regression and performance gates
-- **Priority:** P0 / Critical
-- **Status:** VERIFY after implementation
-- **Dependencies:** T-050, T-031, T-051
-- **Work:** Run the full pytest suite, regression checks for any existing task fields/features retained, and recorded load/search benchmarks. Verify no UI path bypasses service/repository layers.
-- **Done when:** All required tests pass, benchmark results meet or have an approved exception to the target, and unresolved blockers are explicitly accepted before release.
+**Rollout / rollback**
+- Rollout: ship UI + persistence; run smoke + e2e
+- Rollback: revert PR(s)
 
-## Dependency overview
+**Evidence links**
+- PR(s):
+- Playwright report/log:
+- Design/decision notes:
+- Confluence:
 
-```mermaid
-flowchart TD
-    P0[Resolve authoritative requirements] --> P1[Approve schema/path/search/timestamp/recovery decisions]
-    P0 --> P2[Identify UI entry point]
-    P1 --> Model[Domain and persistence mapping]
-    Model --> DB[Stable path and schema/migrations]
-    DB --> Repo[Repository CRUD and transaction behavior]
-    Repo --> Service[Validation and application errors]
-    Service --> UI[UI integration and states]
-    Repo --> Search[Search and filters]
-    Service --> Concurrency[Mutation ordering and timestamps]
-    Search --> Bench[Performance verification]
-    UI --> E2E[Integration/restart/failure tests]
-    Concurrency --> E2E
-    Bench --> Release[Release readiness]
-    E2E --> Release
+---
+
+### 6.3 Enhancement 3 — Task Priority Levels & Sorting (Jira: TBD)
+
+**Goal:** Add priority levels (e.g., Low/Medium/High) and sorting by priority.
+
+**Dev tasks**
+- [ ] Define priority values + default
+- [ ] Add `priority` to schema + migration
+- [ ] Update create/edit UX to set priority
+- [ ] Implement sorting + stable tie-breaker (e.g., created_at or id)
+- [ ] Confirm interaction with status/urgency views
+
+**QA tasks**
+- [ ] Playwright: priority persists after restart
+- [ ] Playwright: sorting correct and stable
+- [ ] Edge: same priority retains stable order
+
+**Gherkin placeholders**
+| ID | Scenario | Type |
+|---|---|---|
+| PRI-HP-01 | Set priority and verify it persists | Happy |
+| PRI-HP-02 | Sort tasks by priority and verify order | Happy |
+| PRI-EC-01 | Same priority retains stable order | Edge |
+
+**Evidence links**
+- PR(s):
+- Playwright report/log:
+- Design/decision notes:
+- Confluence:
+
+---
+
+### 6.4 Enhancement 4 — Due Dates & Urgency Views (Jira: TBD)
+
+**Goal:** Add due dates and urgency-based views (Overdue / Due Today / Upcoming / None).
+
+**Dev tasks**
+- [ ] Decide date-only vs datetime + timezone handling
+- [ ] Add `due_date` to schema + migration
+- [ ] Update create/edit UX to set/clear due date
+- [ ] Implement urgency categorization rules
+- [ ] Implement urgency view(s)
+
+**QA tasks**
+- [ ] Playwright: due date persists after restart
+- [ ] Validate urgency categorization using controlled dates (mock clock if possible)
+- [ ] Edge: timezone boundary; clearing due date; completion interactions
+
+**Gherkin placeholders**
+| ID | Scenario | Type |
+|---|---|---|
+| DUE-HP-01 | Assign due date and verify it persists | Happy |
+| DUE-HP-02 | Overdue tasks appear in overdue view | Happy |
+| DUE-EC-01 | Clear due date and verify view updates | Edge |
+| DUE-EC-02 | Timezone boundary does not misclassify “Due Today” | Edge |
+
+**Evidence links**
+- PR(s):
+- Playwright report/log:
+- Design/decision notes:
+- Confluence:
+
+---
+
+### 6.5 Enhancement 5 — Multi-Condition Search & Status Filtering (MM-4)
+
+**Goal:** Multi-condition search/filter (min: text + status; optionally include priority/due-date).
+
+**Dev tasks**
+- [ ] Define filter dimensions + UX controls
+- [ ] Implement combined filters with AND semantics
+- [ ] Implement query logic (prefer DB query)
+- [ ] Define empty-state and clear/reset behavior
+- [ ] Confirm interaction with sorting/urgency views
+
+**QA tasks**
+- [ ] Playwright: search works
+- [ ] Playwright: status filter works
+- [ ] Playwright: combined search + status works
+- [ ] Edge: empty results; special chars; case sensitivity
+
+**Gherkin placeholders**
+| ID | Scenario | Type |
+|---|---|---|
+| FIL-HP-01 | Search by text returns matching tasks | Happy |
+| FIL-HP-02 | Filter by status returns matching tasks | Happy |
+| FIL-EC-01 | Combine search + status filter uses AND behavior | Edge |
+| FIL-EC-02 | Clearing filters restores default list | Edge |
+
+**Evidence links**
+- PR(s):
+- Playwright report/log:
+- Design/decision notes:
+- Confluence:
+
+---
+
+## 7) Definition of Done (cross-cutting)
+- [ ] MM-9 design checklist used; decisions recorded
+- [ ] MM-10 PR template + review checklist used
+- [ ] MM-11 Gherkin committed and linked
+- [ ] MM-12 Playwright executed; evidence linked; failures tracked
+- [ ] MM-13 Confluence pages created and linked from Jira
+- [ ] MM-14 build scripts + local runbook + smoke run complete
 ```
 
-## Explicit blocked work
-
-The following work must not be started or merged as final behavior until prerequisites are resolved:
-
-- **All product implementation:** blocked until the todo requirements source is reconciled (P-0/T-001).
-- **Schema changes and migration:** blocked until the owner selects the existing-schema mapping or migration path (P-1/T-002).
-- **Production DB path and recovery UX:** blocked until path/backup/recovery policy is approved (P-1/T-003).
-- **Search behavior and query strategy:** blocked until Unicode semantics are approved (P-1/T-004).
-- **Timestamp implementation:** blocked until UTC representation and monotonic update strategy are approved (P-1/T-004).
-- **UI integration:** blocked until the presentation entry point is identified (P-2/T-005).
-- **Release:** blocked until integration/failure tests pass and performance is measured (T-052).
-
-Backend work that does not encode these unresolved choices may proceed only as isolated tests/prototypes; it must not be treated as the final product decision.
-
-## Definition of MVP complete
-
-The MVP is ready when the authoritative todo requirements and owner decisions are recorded; todos persist in the approved SQLite schema across restart; CRUD uses stable IDs; validation, timestamps, search/filter semantics, and failure states meet requirements; database errors cannot silently appear successful or overwrite data; the UI is integrated through the service layer; and required automated/manual QA plus performance checks pass.
+After you create the PR (or merge it), paste the PR URL here and I’ll update the Jira links/comments on **MM-8** and **MM-1** to point to the final `main` file.
