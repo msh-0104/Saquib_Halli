@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "todo_capstone"
+version = "1.0.0"
+description = "AI-driven SDLC Capstone Project - Brownfield Todo App"
+authors = [{ name = "Mohammad Sakib Halli" }]
+dependencies = [
+    "pytest>=8.0.0",
+]
