@@ -1,116 +1,529 @@
-# Design Review — Todo App Architecture
+## Todo App — Design and Wireframes
+### 1) Goals
+- Build a **Design Assistant** that generates **per-artifact** deliverables:
+  - Architecture document/diagram
+  - HLD
+  - LLD
+  - Wireframes
+- Support **both Chat UI and API** usage.
+- Support **export to Confluence** (target space provided).
 
-## Review status
+<<<<<<< HEAD
+### Users
+- PM, Engineering (dev/architect), UX, QA, Stakeholders.
 
-**Review type:** Critical architecture review (senior/principal architect perspective)  
-**Scope:** `docs/architecture.md` against `docs/requirements.md` and the existing Python/SQLite repository structure.  
-**Outcome:** Architecture is directionally sound for the local single-user MVP, but several operational and implementation details needed to be made explicit. The architecture document has been updated to address the gaps below.
+### Key constraints
+- **No saving/versioning** of generated artifacts (stateless or minimal ephemeral session context).
+- **Security/compliance required** (details TBD).
+- **Per-artifact generation** (user chooses artifact type each time).
 
-## Summary
+### Success criteria
+- User can generate any artifact in a consistent template with:
+  - assumptions + open questions
+  - NFRs and risks
+  - Mermaid diagrams where applicable
+- One-click / API-triggered **publish to Confluence** under the provided space.
 
-The layered design (presentation → service/domain → repository → SQLite) is a good fit for a small local application and the existing codebase. SQLite and the existing Python modules avoid unnecessary infrastructure. Main risks were not the overall architecture, but ambiguity in schema compatibility, SQLite's Unicode search semantics, stable database-file location, error classification/recovery, migrations, timestamp resolution, and how rapid writes are ordered.
+---
 
-No new product decisions were explicitly confirmed by the user in this review. The “requirements-confirmed” items below come from `requirements.md`; technical recommendations are recorded as proposed and should not be mistaken for product approval.
+## 2) Assumptions & open questions
+### Assumptions
+- “No saving/versioning” means:
+  - No long-term storage of artifacts in our DB.
+  - We may keep **temporary session context** during a chat/API call to maintain continuity.
+- Confluence export uses Atlassian REST APIs with user/service authentication.
+- Security/compliance means we must implement: authentication, authorization, audit logging, data minimization, and safe handling of sensitive content.
 
-## Findings and disposition
+### Open questions (need your answers to finalize LLD)
+1. **Auth model**: SSO (SAML/OIDC), Atlassian OAuth, API keys, or internal auth? Who are the users?
+2. **Data handling**: Are prompts/designs allowed to contain **customer PII/secrets**? Any redaction requirements?
+3. **Audit**: Do you require audit logs for: prompt, artifact generated, and Confluence publish action?
+4. **Confluence specifics**:
+   - Should we publish into a **specific parent page** in that space?
+   - Naming convention for pages? (e.g., `{Project} - HLD`)
+5. **Diagram rendering**: Should Mermaid remain as code blocks, or do you want Confluence-friendly macros/markup conversion?
 
-### F-01 — Existing schema and requirements model are not reconciled
+I’ll proceed with reasonable defaults in the design below and mark where these answers plug in.
 
-**Severity:** High  
-**Finding:** Requirements describe `completed`, while the existing repository uses `status` values `pending`/`done` and additional fields. Leaving the choice as an open question risks duplicate sources of truth, accidental data loss, or incompatible repository APIs.  
-**Recommendation:** For the MVP, retain the existing `tasks` table and map `pending`/`done` to the domain completion boolean. Preserve extra columns unless the product owner approves a migration. Keep only one persisted source of truth for completion. If a schema change is later approved, migrate IDs/timestamps/data and test rollback/upgrade behavior.  
-**Disposition:** Added as a recommended compatibility decision in `architecture.md`; owner confirmation remains required before implementation.
+---
 
-### F-02 — SQLite built-in case-insensitive matching is not generally Unicode-aware
+# 3) Architecture (review-ready)
 
-**Severity:** High  
-**Finding:** The requirement says case-insensitive search, but SQLite's default `LIKE` case behavior is ASCII-oriented. It may fail expectations for non-ASCII titles. A leading-wildcard contains query also generally cannot use a normal B-tree index effectively.  
-**Recommendation:** Define deterministic locale-independent Unicode case-insensitive semantics. For a few thousand records, use Python `casefold()` matching over the successfully loaded/relevant set and benchmark. If search is moved to SQLite or the data grows, select and test a Unicode-aware collation/FTS strategy. Do not claim a normal index solves `%query%` performance.  
-**Disposition:** Architecture updated with the semantic requirement and implementation options.
+## 3.1 System context
+**System:** Design Assistant (Chat + API)  
+**Outputs:** Markdown (and Mermaid) artifacts; publish to Confluence pages.
 
-### F-03 — Database path may vary with process working directory
+**External systems:**
+- Confluence Cloud (Atlassian)
+- Enterprise Identity Provider (assumed, due to compliance) — exact mechanism TBD
 
-**Severity:** High  
-**Finding:** A relative default such as `todo.db` can create different databases depending on how the app is launched, making saved todos appear to disappear.  
-**Recommendation:** Use a stable OS-appropriate application-data directory for the normal runtime; allow an explicit configuration override for development/tests. Handle directory creation and permission errors without replacing the database.  
-**Disposition:** Added to database-manager responsibilities.
+## 3.2 Component breakdown
+1. **Chat UI**
+   - Artifact picker (Architecture/HLD/LLD/Wireframes)
+   - Prompt intake + clarifications
+   - Preview + “Publish to Confluence”
 
-### F-04 — Failure handling did not classify operational SQLite errors or define recovery behavior
+2. **Public API**
+   - Endpoints to generate each artifact
+   - Endpoint to publish artifact to Confluence
 
-**Severity:** High  
-**Finding:** Generic “storage error” handling is insufficient for locked database, read-only/permission, disk-full/I/O, migration failure, and corruption. Automatically recreating a corrupt/unreadable file could destroy recoverable user data.  
-**Recommendation:** Map storage failures to typed internal categories, set a bounded SQLite busy timeout, avoid infinite retries, roll back failed transactions, preserve an unreadable database, and present safe actionable guidance. Document backup/restore; do not claim SQLite alone protects against hardware failure.  
-**Disposition:** Added error categories, lock handling, and fail-closed recovery guidance to `architecture.md`.
+3. **Backend Orchestrator**
+   - Applies templates per artifact
+   - Manages clarification loop
+   - Enforces policy checks (security/compliance)
 
-### F-05 — Schema migration strategy was too vague for an existing database
+4. **Template/Rules Engine**
+   - Standard sections per artifact
+   - Validation rules (must include assumptions/open questions/checklist)
 
-**Severity:** High  
-**Finding:** The repository already has a schema and may contain data. “Add migrations when needed” does not specify how the application knows the current schema or protects existing records.  
-**Recommendation:** Version schema changes using `PRAGMA user_version` or an equivalent migration table. Run migrations transactionally where supported, preserve/backup data before risky migrations, and test upgrades from representative existing versions. Never silently replace the database.  
-**Disposition:** Added versioning, migration, and test expectations.
+5. **Confluence Publisher**
+   - Creates/updates Confluence pages
+   - Handles formatting conversion (Markdown → Confluence storage format/HTML as needed)
 
-### F-06 — Timestamp guarantee may fail for rapid updates
+6. **Security & Compliance Layer**
+   - Authentication + authorization
+   - Content policy checks (e.g., detect secrets, blocklist)
+   - Audit logging (configurable; details in open questions)
 
-**Severity:** Medium  
-**Finding:** A timestamp source with millisecond or second precision can assign the same `updated_at` to consecutive rapid changes, contradicting the requirement that it changes on every modification. Clock adjustments can also complicate ordering.  
-**Recommendation:** Choose a single UTC representation with sufficient precision and ensure the new `updated_at` is strictly later than the previous value for that record when a successful change commits. Keep `created_at` immutable.  
-**Disposition:** Added explicit timestamp behavior; exact representation remains an implementation detail to settle.
+7. **Ephemeral Context Store (optional but recommended)**
+   - Short-lived session context for a single conversation or request chain
+   - TTL-based; **not** versioning
 
-### F-07 — “Serialize mutations” needs an implementation boundary
+## 3.3 Architecture diagram (Mermaid)
+```mermaid
+flowchart LR
+  U[User] --> UI[Chat UI]
+  U --> API[Public API Client]
 
-**Severity:** Medium  
-**Finding:** Saying to serialize writes does not specify how same-record rapid updates avoid stale state. SQLite serializes writers at the database level, but that alone does not ensure the application applies user-intended operation ordering or prevents stale full-record updates.  
-**Recommendation:** Within the single process, serialize mutations at least per todo ID or use an ordered command queue. Prefer field-specific SQL updates, define order by service acceptance, and return committed rows. Keep multi-process conflict resolution out of MVP while handling locks safely.  
-**Disposition:** Added to architecture reliability rules.
+  UI --> GW[API Gateway / Backend API]
+  API --> GW
 
-### F-08 — SQLite constraints and Python validation can disagree on whitespace
+  GW --> AUTH[AuthN/AuthZ]
+  GW --> ORCH[Design Orchestrator]
+  ORCH --> TPL[Template & Validation Engine]
+  ORCH --> POL[Security/Compliance Policy Checks]
+  ORCH --> CTX[Ephemeral Session Context (TTL)]
 
-**Severity:** Medium  
-**Finding:** A database check using SQLite's default `trim()` does not recognize all Unicode whitespace that Python `str.strip()` recognizes. Relying on the SQL constraint alone may permit a title rejected by the service, or vice versa.  
-**Recommendation:** Make service normalization/validation authoritative and keep database checks as a second line of defense for length and boolean domain. Add tests for whitespace-only Unicode input and length boundaries.  
-**Disposition:** Clarified in the suggested schema description.
+  ORCH --> OUT[Artifact Output: Markdown + Mermaid]
+  UI <-- OUT
+  API <-- OUT
 
-### F-09 — Performance target needs a measurement plan and realistic search strategy
+  GW --> PUB[Confluence Publisher]
+  PUB --> CONF[Atlassian Confluence Cloud]
+  PUB --> AUD[Audit Log Sink]
+```
 
-**Severity:** Medium  
-**Finding:** The 1–2 second load target is given, but no benchmark data, representative dataset, or search measurement is specified. Loading all rows may be acceptable at a few thousand but is not an unlimited scalability strategy.  
-**Recommendation:** Benchmark startup/list and live search with a few thousand representative records on the target runtime. Debounce live search if needed. Avoid premature caching, server infrastructure, or indexes that do not help substring search. Revisit pagination/FTS only if measurements or future scale require it.  
-**Disposition:** Added benchmark guidance. Larger-scale pagination remains future scope.
+## 3.4 Key data flows
+### Flow A — Generate artifact (Chat or API)
+1. User selects artifact type + provides inputs.
+2. Orchestrator extracts brief; if missing critical info → returns clarifying questions.
+3. User answers → generation proceeds.
+4. Validation ensures required sections exist; returns markdown + diagrams.
 
-## Requirements-confirmed decisions
+### Flow B — Publish to Confluence
+1. User clicks “Publish” (or API call).
+2. Publisher authenticates with Confluence.
+3. Create or update page under configured Space/Parent.
+4. Return Confluence page URL.
 
-These are commitments already present in `docs/requirements.md`:
+## 3.5 Security & compliance (architecture-level controls)
+- **AuthN/AuthZ**: enforce user identity and permissions for generation + publishing.
+- **Tenant/space controls**: publishing restricted to allowed Confluence space(s).
+- **Content controls**:
+  - redact/block secrets (tokens, passwords) if present
+  - prevent publishing if policy violations detected
+- **Audit events** (recommended even without versioning):
+  - user initiated generation
+  - user initiated publish
+  - target Confluence page/space
+  - policy action taken (allowed/redacted/blocked)
 
-- The MVP is local and single-user, with SQLite as persistence.
-- Todos use stable IDs; operations do not target list positions.
-- A todo has a title, completion state, `created_at`, and `updated_at` at minimum.
-- Titles are trimmed, non-empty after trimming, and limited to 255 characters.
-- Search is case-insensitive and combines with status filters using AND behavior.
-- Search/filter do not mutate persisted data.
-- Failed reads/writes must not crash the app or be represented as success; the last successfully persisted data remains authoritative.
-- Loading a few thousand records should take approximately 1–2 seconds on a typical developer machine.
-- Multi-user/cross-device sync, retry controls, offline queues, and undo are not MVP requirements.
+---
 
-## Recommended technical decisions — pending owner confirmation
+# 4) High-Level Design (HLD)
 
-1. Preserve the existing `tasks` table and its extra fields for MVP compatibility; map `pending`/`done` to the domain `completed` boolean. Keep one persisted completion representation.
-2. Store the database in a stable application-data directory, with an explicit override for tests/development.
-3. Use versioned migrations and preserve the original database on migration/corruption failures; never silently recreate over an unreadable database.
-4. Define search as locale-independent Unicode case-insensitive matching. Start with Python `casefold()` for the expected small dataset and benchmark before selecting SQLite FTS/extension support.
-5. Ensure `updated_at` strictly advances on every successful modification, in UTC, while `created_at` remains unchanged.
-6. Serialize same-process mutations per todo ID (or equivalent ordered queue), use field-specific updates, and rely on bounded SQLite lock handling rather than unbounded retry.
-7. On corruption or I/O failure, fail closed, preserve the database file, show a clear unavailable state, and provide recovery/backup guidance rather than showing an empty list.
+## 4.1 Major features (per-artifact workflow)
+- Artifact selection: Architecture / HLD / LLD / Wireframes
+- Input form + free-text prompt
+- Clarifying questions panel
+- Preview output
+- Publish to Confluence
 
-## Open decisions / owner sign-off
+## 4.2 Artifact generators (responsibilities)
+- **Architecture generator**
+  - context, boundaries, components, flows, NFRs
+  - Mermaid diagram(s)
+- **HLD generator**
+  - modules, responsibilities, interactions, risks
+- **LLD generator**
+  - APIs, schemas, sequences, error handling, edge cases
+- **Wireframe generator**
+  - screen-by-screen, states, accessibility
 
-- Confirm whether the existing schema mapping recommendation is acceptable, including preservation of description, priority, and due-date columns.
-- Identify the actual presentation entry point/framework; architecture keeps it replaceable because the current requirements do not specify it.
-- Select exact UTC timestamp representation and implementation for strictly advancing `updated_at`.
-- Decide where user backups live and what recovery instructions the app should present.
-- Confirm Unicode search semantics and whether Python-side filtering meets the performance target after measurement.
+## 4.3 Confluence export (HLD behavior)
+- Map each artifact to:
+  - page title
+  - labels (optional)
+  - content body (converted from Markdown)
+- Publish modes:
+  - Create new page
+  - Update existing page (by pageId or title lookup)
 
-## Architecture document update instruction and completion
+## 4.4 Risks
+- Confluence formatting incompatibilities (Mermaid/macros) → decide rendering approach.
+- Compliance ambiguity → finalize policy rules early.
+- No persistence can reduce UX continuity → mitigate with ephemeral context and “export inputs” option.
 
-Copilot: update `docs/architecture.md` when this review identifies a material design gap. In particular, ensure it records the schema compatibility strategy, Unicode search limitations, stable database path, migration/error recovery, timestamp precision, mutation ordering, and performance validation.
+---
 
-**Update status:** The architecture document has been revised to include these recommendations and their pending-approval status. No unconfirmed recommendation is represented as an agreed product decision.
+=======
+## 1) Scope
+### Goals
+- Build a **Design Assistant** that generates **per-artifact** deliverables:
+  - Architecture document/diagram
+  - HLD
+  - LLD
+  - Wireframes
+- Support **both Chat UI and API** usage.
+- Support **export to Confluence** (target space provided).
+
+### Users
+- PM, Engineering (dev/architect), UX, QA, Stakeholders.
+
+### Key constraints
+- **No saving/versioning** of generated artifacts (stateless or minimal ephemeral session context).
+- **Security/compliance required** (details TBD).
+- **Per-artifact generation** (user chooses artifact type each time).
+
+### Success criteria
+- User can generate any artifact in a consistent template with:
+  - assumptions + open questions
+  - NFRs and risks
+  - Mermaid diagrams where applicable
+- One-click / API-triggered **publish to Confluence** under the provided space.
+
+---
+
+## 2) Assumptions & open questions
+### Assumptions
+- “No saving/versioning” means:
+  - No long-term storage of artifacts in our DB.
+  - We may keep **temporary session context** during a chat/API call to maintain continuity.
+- Confluence export uses Atlassian REST APIs with user/service authentication.
+- Security/compliance means we must implement: authentication, authorization, audit logging, data minimization, and safe handling of sensitive content.
+
+### Open questions (need your answers to finalize LLD)
+1. **Auth model**: SSO (SAML/OIDC), Atlassian OAuth, API keys, or internal auth? Who are the users?
+2. **Data handling**: Are prompts/designs allowed to contain **customer PII/secrets**? Any redaction requirements?
+3. **Audit**: Do you require audit logs for: prompt, artifact generated, and Confluence publish action?
+4. **Confluence specifics**:
+   - Should we publish into a **specific parent page** in that space?
+   - Naming convention for pages? (e.g., `{Project} - HLD`)
+5. **Diagram rendering**: Should Mermaid remain as code blocks, or do you want Confluence-friendly macros/markup conversion?
+
+I’ll proceed with reasonable defaults in the design below and mark where these answers plug in.
+
+---
+
+# 3) Architecture (review-ready)
+
+## 3.1 System context
+**System:** Design Assistant (Chat + API)  
+**Outputs:** Markdown (and Mermaid) artifacts; publish to Confluence pages.
+
+**External systems:**
+- Confluence Cloud (Atlassian)
+- Enterprise Identity Provider (assumed, due to compliance) — exact mechanism TBD
+
+## 3.2 Component breakdown
+1. **Chat UI**
+   - Artifact picker (Architecture/HLD/LLD/Wireframes)
+   - Prompt intake + clarifications
+   - Preview + “Publish to Confluence”
+
+2. **Public API**
+   - Endpoints to generate each artifact
+   - Endpoint to publish artifact to Confluence
+
+3. **Backend Orchestrator**
+   - Applies templates per artifact
+   - Manages clarification loop
+   - Enforces policy checks (security/compliance)
+
+4. **Template/Rules Engine**
+   - Standard sections per artifact
+   - Validation rules (must include assumptions/open questions/checklist)
+
+5. **Confluence Publisher**
+   - Creates/updates Confluence pages
+   - Handles formatting conversion (Markdown → Confluence storage format/HTML as needed)
+
+6. **Security & Compliance Layer**
+   - Authentication + authorization
+   - Content policy checks (e.g., detect secrets, blocklist)
+   - Audit logging (configurable; details in open questions)
+
+7. **Ephemeral Context Store (optional but recommended)**
+   - Short-lived session context for a single conversation or request chain
+   - TTL-based; **not** versioning
+
+## 3.3 Architecture diagram (Mermaid)
+```mermaid
+flowchart LR
+  U[User] --> UI[Chat UI]
+  U --> API[Public API Client]
+
+  UI --> GW[API Gateway / Backend API]
+  API --> GW
+
+  GW --> AUTH[AuthN/AuthZ]
+  GW --> ORCH[Design Orchestrator]
+  ORCH --> TPL[Template & Validation Engine]
+  ORCH --> POL[Security/Compliance Policy Checks]
+  ORCH --> CTX[Ephemeral Session Context (TTL)]
+
+  ORCH --> OUT[Artifact Output: Markdown + Mermaid]
+  UI <-- OUT
+  API <-- OUT
+
+  GW --> PUB[Confluence Publisher]
+  PUB --> CONF[Atlassian Confluence Cloud]
+  PUB --> AUD[Audit Log Sink]
+```
+
+## 3.4 Key data flows
+### Flow A — Generate artifact (Chat or API)
+1. User selects artifact type + provides inputs.
+2. Orchestrator extracts brief; if missing critical info → returns clarifying questions.
+3. User answers → generation proceeds.
+4. Validation ensures required sections exist; returns markdown + diagrams.
+
+### Flow B — Publish to Confluence
+1. User clicks “Publish” (or API call).
+2. Publisher authenticates with Confluence.
+3. Create or update page under configured Space/Parent.
+4. Return Confluence page URL.
+
+## 3.5 Security & compliance (architecture-level controls)
+- **AuthN/AuthZ**: enforce user identity and permissions for generation + publishing.
+- **Tenant/space controls**: publishing restricted to allowed Confluence space(s).
+- **Content controls**:
+  - redact/block secrets (tokens, passwords) if present
+  - prevent publishing if policy violations detected
+- **Audit events** (recommended even without versioning):
+  - user initiated generation
+  - user initiated publish
+  - target Confluence page/space
+  - policy action taken (allowed/redacted/blocked)
+
+---
+
+# 4) High-Level Design (HLD)
+
+## 4.1 Major features (per-artifact workflow)
+- Artifact selection: Architecture / HLD / LLD / Wireframes
+- Input form + free-text prompt
+- Clarifying questions panel
+- Preview output
+- Publish to Confluence
+
+## 4.2 Artifact generators (responsibilities)
+- **Architecture generator**
+  - context, boundaries, components, flows, NFRs
+  - Mermaid diagram(s)
+- **HLD generator**
+  - modules, responsibilities, interactions, risks
+- **LLD generator**
+  - APIs, schemas, sequences, error handling, edge cases
+- **Wireframe generator**
+  - screen-by-screen, states, accessibility
+
+## 4.3 Confluence export (HLD behavior)
+- Map each artifact to:
+  - page title
+  - labels (optional)
+  - content body (converted from Markdown)
+- Publish modes:
+  - Create new page
+  - Update existing page (by pageId or title lookup)
+
+## 4.4 Risks
+- Confluence formatting incompatibilities (Mermaid/macros) → decide rendering approach.
+- Compliance ambiguity → finalize policy rules early.
+- No persistence can reduce UX continuity → mitigate with ephemeral context and “export inputs” option.
+
+---
+
+>>>>>>> 4f6519b202305555ca267e6965c0fdc79f833e53
+# 5) Low-Level Design (LLD) — concrete API contracts (tech-agnostic)
+
+## 5.1 API: Generate artifact
+### `POST /artifacts/generate`
+**Request**
+```json
+{
+  "artifactType": "architecture | hld | lld | wireframes",
+  "projectName": "string",
+  "inputs": {
+    "problemStatement": "string",
+    "scopeIn": ["string"],
+    "scopeOut": ["string"],
+    "users": ["string"],
+    "nfrs": ["string"],
+    "integrations": ["string"],
+    "constraints": ["string"],
+    "additionalNotes": "string"
+  },
+  "clarifications": {
+    "answers": [
+      { "questionId": "string", "answer": "string" }
+    ]
+  },
+  "outputOptions": {
+    "format": "markdown",
+    "includeMermaid": true
+  }
+}
+```
+
+**Response (success)**
+```json
+{
+  "artifactType": "hld",
+  "content": "markdown string...",
+  "diagrams": [
+    { "type": "mermaid", "name": "context", "code": "mermaid string..." }
+  ],
+  "assumptions": ["..."],
+  "openQuestions": ["..."],
+  "reviewChecklist": ["..."],
+  "policyFindings": []
+}
+```
+
+**Response (needs-clarification)**
+```json
+{
+  "status": "needs_clarification",
+  "questions": [
+    { "questionId": "q1", "question": "Who are the primary personas?", "priority": "high" }
+  ],
+  "assumptionsIfSkipped": ["..."]
+}
+```
+
+## 5.2 API: Publish to Confluence
+### `POST /exports/confluence`
+**Request**
+```json
+{
+  "spaceKeyOrId": "string",
+  "parentPageId": "string",
+  "title": "string",
+  "content": "markdown string...",
+  "mode": "create | update",
+  "updateBy": "pageId | title",
+  "labels": ["string"]
+}
+```
+
+**Response**
+```json
+{
+  "status": "published",
+  "confluencePageId": "string",
+  "url": "string"
+}
+```
+
+## 5.3 Error handling (LLD)
+- `400` invalid artifactType / missing required fields
+- `401/403` unauthenticated/unauthorized
+- `409` Confluence title conflict (if create-only)
+- `422` policy violation (secrets detected, restricted content)
+- `502/504` Confluence API failures/timeouts (return retry guidance)
+
+## 5.4 Sequence diagram — publish flow
+```mermaid
+sequenceDiagram
+  participant User
+  participant UI as Chat UI / API Client
+  participant BE as Backend
+  participant POL as Policy Check
+  participant CONF as Confluence API
+
+  User->>UI: Click Publish (artifact markdown)
+  UI->>BE: POST /exports/confluence
+  BE->>POL: Validate content for compliance
+  POL-->>BE: allow/redact/block
+  alt blocked
+    BE-->>UI: 422 Policy violation
+  else allowed
+    BE->>CONF: Create/Update page
+    CONF-->>BE: pageId + link
+    BE-->>UI: Published + URL
+  end
+```
+
+---
+
+# 6) Wireframes (text-based) — Chat UI (per-artifact)
+
+## Screen A — Artifact Picker + Prompt
+- Left: Artifact type selector (Architecture / HLD / LLD / Wireframes)
+- Main:
+  - Project name
+  - Prompt / requirements textbox
+  - Structured fields (optional accordion): scope, NFRs, integrations, constraints
+- Actions: **Generate**, **Generate questions first**
+
+States:
+- Empty: examples
+- Error: missing minimal inputs (projectName + prompt)
+- Loading: “Generating {artifact}…”
+
+## Screen B — Clarifications
+- Panel: “Questions to finalize the design”
+- Each question: input control + “why we need this”
+- Actions: **Apply answers**, **Skip (use assumptions)**
+
+## Screen C — Artifact Preview
+- Tabs: Output | Assumptions | Open Questions | Checklist
+- Output tab:
+  - Markdown preview
+  - Copy button
+  - Download .md
+- Actions: **Publish to Confluence**
+
+## Screen D — Publish to Confluence
+- Inputs:
+  - Space (pre-filled/locked to allowed target)
+  - Parent page (optional selector or ID input)
+  - Page title (default `{Project} - {Artifact}`)
+  - Mode: Create/Update
+- Action: **Publish**
+- Result: Published URL + pageId
+
+Accessibility:
+- Keyboard focus order across tabs and form fields
+- Proper headings in preview
+- Error messages announced (ARIA live region)
+
+---
+
+# 7) Confluence export note (your link)
+You provided a Confluence space URL. To implement export reliably, we still need:
+- the **space key** (or space id)
+- whether there is a **parent pageId** to publish under
+
+If you want, I can look this up via the Confluence API (if you have connectivity/credentials in your environment), otherwise you can paste the space key and parent page link.
+
+---
+
+## 8) Review checklist (implementation readiness)
+- [ ] AuthN/AuthZ approach confirmed (SSO/OAuth/API tokens)  
+- [ ] Compliance rules defined (what to redact/block; audit requirements)  
+- [ ] Confluence target identified (space key/id + parent pageId + naming convention)  
+- [ ] Mermaid rendering strategy in Confluence confirmed  
+- [ ] Per-artifact templates approved (required sections + validation rules)  
+- [ ] API contracts reviewed (generate + publish + error codes)  
